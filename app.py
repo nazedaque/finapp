@@ -190,61 +190,42 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # Noms manquants via yfinance
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _get_name_for_ticker(t: str) -> tuple[str, str]:
+    """
+    Récupère le nom d'un ticker via l'endpoint chart de Yahoo Finance.
+    L'endpoint chart (/v8/finance/chart/) inclut meta.shortName dans sa réponse
+    et est le même que celui utilisé pour les cours — donc fiable pour toutes places.
+    """
+    try:
+        ticker_obj = yf.Ticker(t)
+        # history() appelle /v8/finance/chart/ et peuple history_metadata
+        ticker_obj.history(period="2d", interval="1d")
+        meta = getattr(ticker_obj, "history_metadata", None) or {}
+        name = meta.get("shortName") or meta.get("longName") or ""
+        if name:
+            return t, str(name).strip()
+    except Exception:
+        pass
+    return t, ""
+
+
 @st.cache_data(ttl=NAMES_TTL, show_spinner=False)
 def fetch_missing_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     """
-    Récupère les noms via l'API Yahoo Finance quote en mode batch
-    (50 tickers par requête). Fallback sur yf.Ticker().info si l'API échoue.
+    Récupère les noms en parallèle via l'endpoint chart Yahoo Finance.
+    Résultats mis en cache 24h.
     """
-    import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     names: dict[str, str] = {}
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json",
-    }
-
-    failed_batches: list[str] = []
-
-    for batch in _chunked(list(yf_tickers), 50):
-        symbols = ",".join(batch)
-        fetched = False
-        for host in ("query1", "query2"):
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_t = {executor.submit(_get_name_for_ticker, t): t for t in yf_tickers}
+        for future in as_completed(future_to_t, timeout=120):
             try:
-                url = (
-                    f"https://{host}.finance.yahoo.com/v7/finance/quote"
-                    f"?symbols={symbols}&fields=shortName,longName"
-                )
-                resp = requests.get(url, headers=headers, timeout=15)
-                if resp.status_code != 200:
-                    continue
-                results = resp.json().get("quoteResponse", {}).get("result", [])
-                for q in results:
-                    sym  = q.get("symbol", "")
-                    name = q.get("shortName") or q.get("longName") or ""
-                    if sym:
-                        names[sym] = str(name).strip()
-                fetched = True
-                break
+                ticker, name = future.result(timeout=15)
+                names[ticker] = name
             except Exception:
-                continue
-        if not fetched:
-            failed_batches.extend(batch)
-
-    # Fallback individuel pour les tickers dont le batch a échoué (limité à 30)
-    for t in failed_batches[:30]:
-        if t not in names:
-            try:
-                info = yf.Ticker(t).info
-                name = info.get("shortName") or info.get("longName") or ""
-                names[t] = str(name).strip()
-            except Exception:
-                names[t] = ""
-
+                names[future_to_t[future]] = ""
     return names
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -516,7 +497,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names_fb: dict, key: str) -> 
     with c1:
         search = st.text_input(
             "Recherche", key=f"{key}_s",
-            placeholder="Ticker ou société…", label_visibility="collapsed",
+            placeholder="Ticker ou société…",
         )
     with c2:
         sort_choice = st.selectbox(
