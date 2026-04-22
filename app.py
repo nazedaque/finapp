@@ -198,38 +198,10 @@ def _ts_to_date(ts) -> date | None:
     return None
 
 
-# ── Noms : via history_metadata, même endpoint que les cours ─────────────────
-
-def _fetch_name(t: str) -> tuple[str, str]:
-    try:
-        ticker_obj = yf.Ticker(t)
-        ticker_obj.history(period="2d", interval="1d")
-        meta = getattr(ticker_obj, "history_metadata", None) or {}
-        name = (meta.get("shortName") or meta.get("longName") or "").strip()
-        return t, name
-    except Exception:
-        return t, ""
-
-
-@st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
-def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
-    """Noms via history_metadata — rapide, même TTL que les cours."""
-    names: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(_fetch_name, t): t for t in yf_tickers}
-        for future in as_completed(futures, timeout=120):
-            try:
-                t, name = future.result(timeout=15)
-                names[t] = name
-            except Exception:
-                names[futures[future]] = ""
-    return names
-
-
-# ── Beta + Earnings : via .info, lent, à déclencher manuellement ─────────────
+# ── Beta + Earnings + Nom : via .info, à déclencher manuellement ─────────────
 
 def _fetch_one_beta_earnings(t: str) -> tuple[str, dict]:
-    result: dict = {"beta": None, "earnings": None, "last_earnings": None}
+    result: dict = {"name": "", "beta": None, "earnings": None, "last_earnings": None}
     try:
         ticker_obj = yf.Ticker(t)
 
@@ -252,6 +224,10 @@ def _fetch_one_beta_earnings(t: str) -> tuple[str, dict]:
                 result["beta"] = float(beta)
             except Exception:
                 pass
+
+        name = (info.get("shortName") or info.get("longName") or "").strip()
+        if name:
+            result["name"] = name
 
         # Collecte de toutes les dates candidates
         today = date.today()
@@ -452,8 +428,7 @@ def html_link(url) -> str:
 # Construction des lignes
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_rows(df_sub: pd.DataFrame, prices: dict,
-               names: dict[str, str], be: dict[str, dict]) -> list[dict]:
+def build_rows(df_sub: pd.DataFrame, prices: dict, be: dict[str, dict]) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
         yf_t = r.get("yf_ticker")
@@ -464,8 +439,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         price = q.get("price") or r.get("spot_sheet")
         chg   = q.get("chg")
 
-        # Nom : sheet → fetch_names → italique gf_ticker
-        name = r.get("name", "") or names.get(yf_s, "")
+        # Nom : sheet → be_data (.info) → italique gf_ticker
+        name = r.get("name", "") or be_d.get("name", "")
         name_upper = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
@@ -573,8 +548,8 @@ def render_table(rows: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(df_sub: pd.DataFrame, prices: dict,
-               names: dict, be: dict, key: str) -> None:
-    rows = build_rows(df_sub, prices, names, be)
+               be: dict, key: str) -> None:
+    rows = build_rows(df_sub, prices, be)
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
@@ -644,7 +619,6 @@ b1, b2, info_col = st.columns([1, 1, 3])
 with b1:
     if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_prices.clear()
-        fetch_names.clear()
         load_tickers.clear()
         st.rerun()
 
@@ -662,12 +636,9 @@ with info_col:
         f"Beta & Earnings : {be_ts}"
     )
 
-# ── Cours + Noms ──────────────────────────────────────────────────────────────
+# ── Cours ─────────────────────────────────────────────────────────────────────
 with st.spinner(f"Récupération de {len(valid_yf)} cours…"):
     prices = fetch_prices(valid_yf)
-
-with st.spinner(f"Récupération des noms ({len(valid_yf)} titres)…"):
-    names = fetch_names(valid_yf)
 
 st.session_state["last_prices_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
@@ -686,6 +657,6 @@ st.divider()
 
 tab1, tab2 = st.tabs([f"Portefeuille ({len(pf_df)})", f"Watchlist ({len(wl_df)})"])
 with tab1:
-    render_tab(pf_df, prices, names, be_data, key="pf")
+    render_tab(pf_df, prices, be_data, key="pf")
 with tab2:
-    render_tab(wl_df, prices, names, be_data, key="wl")
+    render_tab(wl_df, prices, be_data, key="wl")
