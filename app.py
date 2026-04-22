@@ -230,27 +230,24 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
                     raw = cal.get("Earnings Date")
                     if raw is not None:
                         dates = raw if isinstance(raw, list) else [raw]
-                        today = date.today()
-                        future = []
+                        parsed = []
                         for d in dates:
                             try:
                                 if hasattr(d, "date"):
                                     d = d.date()
                                 elif isinstance(d, str):
                                     d = datetime.strptime(d[:10], "%Y-%m-%d").date()
-                                if d > today:
-                                    future.append(d)
+                                parsed.append(d)
                             except Exception:
                                 pass
-                        if future:
-                            result["earnings"] = min(future)
+                        if parsed:
+                            result["earnings"] = min(parsed)
                 elif hasattr(cal, "loc"):          # DataFrame
                     try:
                         d = cal.loc["Earnings Date"].iloc[0]
                         if hasattr(d, "date"):
                             d = d.date()
-                        if d > date.today():
-                            result["earnings"] = d
+                        result["earnings"] = d
                     except Exception:
                         pass
         except Exception:
@@ -369,19 +366,39 @@ def fmt_score(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(round(float(v)))
 
-def fmt_maj(d) -> str:
-    """Date de dernière MAJ (colonne B du sheet). Rouge si > 30 jours."""
-    if d is None or (isinstance(d, float) and pd.isna(d)): return "—"
+def fmt_maj(maj_date, earnings_date) -> str:
+    """
+    Règles de couleur pour la colonne MAJ :
+    - Rouge si MAJ > Earnings (analyse postérieure aux derniers résultats)
+    - Rouge si pas d'Earnings ET MAJ > 30 jours
+    - Sinon : blanc normal
+    """
+    if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
+        return "—"
     try:
-        d = d if isinstance(d, date) else pd.to_datetime(d).date()
+        d = maj_date if isinstance(maj_date, date) else pd.to_datetime(maj_date).date()
         s = d.strftime("%d-%m-%Y")
-        if (date.today() - d).days > 30:
-            return f'<span style="color:#ef4444">{s}</span>'
-        return s
+        red = False
+        if earnings_date is not None:
+            red = d > earnings_date
+        else:
+            red = (date.today() - d).days > 30
+        return f'<span style="color:#ef4444">{s}</span>' if red else s
     except Exception:
         return "—"
 
-def fmt_beta(v) -> str:
+def fmt_earnings(d) -> str:
+    """Affiche la date earnings telle quelle (passée ou future), sans filtre."""
+    if d is None or (isinstance(d, float) and pd.isna(d)):
+        return "—"
+    try:
+        if not isinstance(d, date):
+            d = pd.to_datetime(d).date()
+        return d.strftime("%d-%m-%Y")
+    except Exception:
+        return "—"
+
+
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):.2f}"
 
@@ -440,7 +457,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, be: dict[str, dict]) -> list[
 
         # Colonne MAJ
         last_update = r.get("last_update")
-        maj_html = fmt_maj(last_update)
+        maj_html = fmt_maj(last_update, earnings)
 
         gf = str(r["gf_ticker"])
         name_html = (name_upper if name_upper
