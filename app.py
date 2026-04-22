@@ -193,14 +193,17 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
     result: dict = {"name": "", "beta": None, "earnings": None, "last_earnings": None}
     try:
         ticker_obj = yf.Ticker(t)
-        # Nom via endpoint chart (fiable pour toutes places)
+
+        # ── Nom via endpoint chart ─────────────────────────────────────────
         try:
             ticker_obj.history(period="2d", interval="1d")
             meta = getattr(ticker_obj, "history_metadata", None) or {}
             result["name"] = (meta.get("shortName") or meta.get("longName") or "").strip()
         except Exception:
             pass
-        # Beta + Earnings via .info
+
+        # ── Info : nom (fallback), beta ────────────────────────────────────
+        info: dict = {}
         try:
             info = ticker_obj.info or {}
             if not result["name"]:
@@ -208,64 +211,82 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
             beta = info.get("beta")
             if beta is not None:
                 result["beta"] = float(beta)
-
-            today = date.today()
-
-            # Yahoo stocke la date selon le ticker dans des champs différents.
-            # On collecte tous les timestamps disponibles et on prend le plus pertinent.
-            candidates: list[date] = []
-
-            # 1) Champs scalaires
-            for field in ("earningsTimestamp", "earningsTimestampStart",
-                          "earningsTimestampEnd"):
-                ts = info.get(field)
-                if ts and isinstance(ts, (int, float)) and ts > 0:
-                    candidates.append(datetime.utcfromtimestamp(ts).date())
-
-            # 2) earningsDate : souvent une liste [ts_debut, ts_fin]
-            raw = info.get("earningsDate")
-            if raw:
-                items = raw if isinstance(raw, list) else [raw]
-                for ts in items:
-                    if ts and isinstance(ts, (int, float)) and ts > 0:
-                        candidates.append(datetime.utcfromtimestamp(ts).date())
-
-            if candidates:
-                # Préférer la date la plus récente (passée ou future)
-                best = max(candidates)
-                result["earnings"] = best
-                # Pour MAJ : on veut la date passée la plus récente
-                past = [d for d in candidates if d < today]
-                if past:
-                    result["last_earnings"] = max(past)
         except Exception:
-            info = {}
+            pass
 
-        # Compléter last_earnings via earnings_dates si toujours manquant
-        if result["last_earnings"] is None:
-            try:
-                ed = ticker_obj.earnings_dates
-                if ed is not None and not ed.empty:
-                    rep_col = next(
-                        (c for c in ed.columns if "reported" in c.lower()), None
-                    )
-                    past = ed[ed[rep_col].notna()] if rep_col else ed
-                    if not past.empty:
-                        last_ts = past.index[0]
-                        d = (last_ts.date() if hasattr(last_ts, "date")
-                             else last_ts.to_pydatetime().date())
-                        result["last_earnings"] = d
-            except Exception:
-                pass
+        # ── Collecte de toutes les dates candidates ────────────────────────
+        today = date.today()
+        all_dates: list[date] = []
 
-        # Dernier fallback : mostRecentQuarter (fin de trimestre)
-        if result["last_earnings"] is None:
-            try:
-                mrq = (info or {}).get("mostRecentQuarter")
-                if mrq and isinstance(mrq, (int, float)) and mrq > 0:
-                    result["last_earnings"] = datetime.utcfromtimestamp(mrq).date()
-            except Exception:
-                pass
+        # Source 1 : champs scalaires de .info
+        for field in ("earningsTimestamp", "earningsTimestampStart",
+                      "earningsTimestampEnd"):
+            ts = info.get(field)
+            if ts and isinstance(ts, (int, float)) and ts > 0:
+                try:
+                    all_dates.append(datetime.utcfromtimestamp(ts).date())
+                except Exception:
+                    pass
+
+        # Source 2 : earningsDate (liste ou scalaire)
+        raw = info.get("earningsDate")
+        if raw:
+            for ts in (raw if isinstance(raw, list) else [raw]):
+                if ts and isinstance(ts, (int, float)) and ts > 0:
+                    try:
+                        all_dates.append(datetime.utcfromtimestamp(ts).date())
+                    except Exception:
+                        pass
+
+        # Source 3 : calendarEvents (souvent renseigné pour les actions EU)
+        try:
+            cal = info.get("calendarEvents") or {}
+            earn_cal = cal.get("earnings") or {}
+            raw_cal = earn_cal.get("earningsDate") or []
+            for ts in (raw_cal if isinstance(raw_cal, list) else [raw_cal]):
+                if ts and isinstance(ts, (int, float)) and ts > 0:
+                    try:
+                        all_dates.append(datetime.utcfromtimestamp(ts).date())
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Source 4 : earnings_dates DataFrame (la plus complète)
+        try:
+            ed = ticker_obj.earnings_dates
+            if ed is not None and not ed.empty:
+                for idx in ed.index:
+                    try:
+                        d = idx.date() if hasattr(idx, "date") else idx.to_pydatetime().date()
+                        all_dates.append(d)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Source 5 : mostRecentQuarter (dernier recours pour MAJ)
+        mrq_date: date | None = None
+        try:
+            mrq = info.get("mostRecentQuarter")
+            if mrq and isinstance(mrq, (int, float)) and mrq > 0:
+                mrq_date = datetime.utcfromtimestamp(mrq).date()
+        except Exception:
+            pass
+
+        # ── Sélection ─────────────────────────────────────────────────────
+        if all_dates:
+            # Affichage Earnings : date la plus récente toutes catégories
+            result["earnings"] = max(all_dates)
+            # MAJ : date passée la plus récente
+            past = [d for d in all_dates if d < today]
+            if past:
+                result["last_earnings"] = max(past)
+
+        # Fallback MAJ : mostRecentQuarter
+        if result["last_earnings"] is None and mrq_date and mrq_date < today:
+            result["last_earnings"] = mrq_date
+
     except Exception:
         pass
     return t, result
