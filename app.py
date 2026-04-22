@@ -79,7 +79,7 @@ DISPLAY_COLS = [
 ]
 
 COL_WIDTHS = {
-    "MAJ":      "38px",
+    "MAJ":      "92px",
     "Ticker":   "100px",
     "Société":  "220px",
     "Prix":     "82px",
@@ -394,6 +394,18 @@ def fmt_score(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(round(float(v)))
 
+def fmt_maj(d) -> str:
+    """Date de dernière MAJ (colonne B du sheet). Rouge si > 30 jours."""
+    if d is None or (isinstance(d, float) and pd.isna(d)): return "—"
+    try:
+        d = d if isinstance(d, date) else pd.to_datetime(d).date()
+        s = d.strftime("%d-%m-%Y")
+        if (date.today() - d).days > 30:
+            return f'<span style="color:#ef4444">{s}</span>'
+        return s
+    except Exception:
+        return "—"
+
 def fmt_beta(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):.2f}"
@@ -454,10 +466,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, be: dict[str, dict]) -> list[
 
         # Colonne MAJ
         last_update = r.get("last_update")
-        if last_update and last_earnings:
-            maj_html = "✔️" if last_update >= last_earnings else "⚠️"
-        else:
-            maj_html = ""
+        maj_html = fmt_maj(last_update)
 
         gf = str(r["gf_ticker"])
         name_html = (name_upper if name_upper
