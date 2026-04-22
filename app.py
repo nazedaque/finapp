@@ -72,12 +72,14 @@ STATUT_COLOR = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
+    "MAJ",
     "Ticker", "Société", "Prix", "Var %",
     "Score", "Buy", "Fair", "Trim", "Exit",
     "Qualité", "Beta", "Statut", "Earnings", "🔗",
 ]
 
 COL_WIDTHS = {
+    "MAJ":      "38px",
     "Ticker":   "100px",
     "Société":  "220px",
     "Prix":     "82px",
@@ -94,7 +96,7 @@ COL_WIDTHS = {
     "🔗":       "32px",
 }
 
-CENTER = {"Prix", "Var %", "Score", "Buy", "Fair", "Trim", "Exit",
+CENTER = {"MAJ", "Prix", "Var %", "Score", "Buy", "Fair", "Trim", "Exit",
           "Qualité", "Beta", "Statut", "Earnings", "🔗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -140,7 +142,7 @@ SHEET_COL_NORMALIZED = {
     "ticker": "gf_ticker", "societe": "name", "portif": "portif",
     "note": "note", "buy": "buy", "fair": "fair", "trim": "trim",
     "exit": "exit", "url": "url", "spot": "spot_sheet",
-    "score mixte": "score_sheet",
+    "score mixte": "score_sheet", "last update": "last_update",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
 
@@ -171,6 +173,15 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip())
     for col in NUMERIC_COLS:
         if col in df.columns: df[col] = df[col].apply(parse_num)
+
+    # Parsing de la date de dernière MAJ (format JJ/MM/AAAA depuis le sheet)
+    if "last_update" in df.columns:
+        df["last_update"] = pd.to_datetime(
+            df["last_update"], format="%d/%m/%Y", errors="coerce"
+        ).dt.date
+    else:
+        df["last_update"] = None
+
     df["yf_ticker"] = df["gf_ticker"].astype(str).apply(gf_to_yf)
     return df.reset_index(drop=True), source
 
@@ -179,7 +190,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _fetch_one_meta(t: str) -> tuple[str, dict]:
-    result: dict = {"name": "", "beta": None, "earnings": None}
+    result: dict = {"name": "", "beta": None, "earnings": None, "last_earnings": None}
     try:
         ticker_obj = yf.Ticker(t)
         # Nom via endpoint chart (fiable pour toutes places)
@@ -197,11 +208,24 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
             beta = info.get("beta")
             if beta is not None:
                 result["beta"] = float(beta)
+            # Prochains earnings
             ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
             if ts and isinstance(ts, (int, float)) and ts > 0:
                 d = datetime.utcfromtimestamp(ts).date()
                 if d >= date.today():
                     result["earnings"] = d
+        except Exception:
+            pass
+        # Derniers earnings passés (via earnings_dates)
+        try:
+            ed = ticker_obj.earnings_dates
+            if ed is not None and not ed.empty and "Reported EPS" in ed.columns:
+                past = ed[ed["Reported EPS"].notna()]
+                if not past.empty:
+                    last_ts = past.index[0]
+                    # L'index peut être tz-aware
+                    if hasattr(last_ts, "date"):
+                        result["last_earnings"] = last_ts.date()
         except Exception:
             pass
     except Exception:
@@ -371,6 +395,14 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]
 
         beta     = meta.get("beta")
         earnings = meta.get("earnings")
+        last_earnings = meta.get("last_earnings")
+
+        # Colonne MAJ : comparaison date de mise à jour vs derniers earnings
+        last_update = r.get("last_update")  # date or None
+        if last_update and last_earnings:
+            maj_html = "✔️" if last_update >= last_earnings else "⚠️"
+        else:
+            maj_html = ""
 
         gf = str(r["gf_ticker"])
         name_html = (name_upper if name_upper
@@ -384,6 +416,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]
             "_ticker":       gf,
             "_name":         name,
             "_statut":       statut,
+            "MAJ":           maj_html,
             "Ticker":        f'<span style="color:#93c5fd;font-size:.8rem;font-family:monospace">{gf}</span>',
             "Société":       f'<span title="{name_upper}">{name_html}</span>',
             "Prix":          fmt_price(price),
