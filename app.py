@@ -189,96 +189,72 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # Métadonnées Yahoo : nom, beta, earnings (en parallèle, cache 24h)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _ts_to_date(ts) -> date | None:
+def _fetch_one_meta(t: str) -> tuple[str, dict]:
+    """
+    Récupère nom, beta et prochains earnings pour un ticker.
+    - Nom     : via history_metadata (endpoint chart, fiable partout)
+    - Beta    : via .info["beta"]
+    - Earnings: via .calendar uniquement — source la plus fiable de yfinance.
+                On ne prend la date QUE si elle est dans le futur.
+                Si .calendar est vide ou absent → "—" (pas de date inventée).
+    """
+    result: dict = {"name": "", "beta": None, "earnings": None}
     try:
-        if ts and isinstance(ts, (int, float)) and ts > 0:
-            return datetime.utcfromtimestamp(ts).date()
-    except Exception:
-        pass
-    return None
+        tk = yf.Ticker(t)
 
-
-# ── Beta + Earnings + Nom : via .info, à déclencher manuellement ─────────────
-
-def _fetch_one_beta_earnings(t: str) -> tuple[str, dict]:
-    result: dict = {"name": "", "beta": None, "earnings": None, "last_earnings": None}
-    try:
-        ticker_obj = yf.Ticker(t)
-
-        # .info avec retry sur 429 uniquement
-        info: dict = {}
-        for attempt in range(3):
-            try:
-                info = ticker_obj.info or {}
-                break
-            except Exception as e:
-                if attempt < 2 and ("429" in str(e) or "Too Many" in str(e)):
-                    import time
-                    time.sleep(2 ** attempt + 1)
-                else:
-                    break
-
-        beta = info.get("beta")
-        if beta is not None:
-            try:
-                result["beta"] = float(beta)
-            except Exception:
-                pass
-
-        name = (info.get("shortName") or info.get("longName") or "").strip()
-        if name:
-            result["name"] = name
-
-        # Collecte de toutes les dates candidates
-        today = date.today()
-        all_dates: list[date] = []
-
-        for field in ("earningsTimestamp", "earningsTimestampStart", "earningsTimestampEnd"):
-            d = _ts_to_date(info.get(field))
-            if d: all_dates.append(d)
-
-        raw = info.get("earningsDate")
-        for ts in (raw if isinstance(raw, list) else [raw] if raw else []):
-            d = _ts_to_date(ts)
-            if d: all_dates.append(d)
-
+        # Nom via endpoint chart
         try:
-            cal = info.get("calendarEvents") or {}
-            earn_cal = cal.get("earnings") or {}
-            raw_cal = earn_cal.get("earningsDate") or []
-            for ts in (raw_cal if isinstance(raw_cal, list) else [raw_cal] if raw_cal else []):
-                d = _ts_to_date(ts)
-                if d: all_dates.append(d)
+            tk.history(period="2d", interval="1d")
+            meta = getattr(tk, "history_metadata", None) or {}
+            result["name"] = (meta.get("shortName") or meta.get("longName") or "").strip()
         except Exception:
             pass
 
-        # earnings_dates DataFrame — le plus complet
-        for attempt in range(2):
-            try:
-                ed = ticker_obj.earnings_dates
-                if ed is not None and not ed.empty:
-                    for idx in ed.index:
-                        try:
-                            d = idx.date() if hasattr(idx, "date") else idx.to_pydatetime().date()
-                            all_dates.append(d)
-                        except Exception:
-                            pass
-                break
-            except Exception as e:
-                if attempt < 1 and ("429" in str(e) or "Too Many" in str(e)):
-                    import time
-                    time.sleep(3)
+        # Beta + nom fallback via .info
+        try:
+            info = tk.info or {}
+            if not result["name"]:
+                result["name"] = (info.get("shortName") or info.get("longName") or "").strip()
+            b = info.get("beta")
+            if b is not None:
+                result["beta"] = float(b)
+        except Exception:
+            pass
 
-        if all_dates:
-            result["earnings"] = max(all_dates)
-            past = [d for d in all_dates if d < today]
-            if past:
-                result["last_earnings"] = max(past)
-
-        if result["last_earnings"] is None:
-            d = _ts_to_date(info.get("mostRecentQuarter"))
-            if d and d < today:
-                result["last_earnings"] = d
+        # Earnings via .calendar uniquement
+        try:
+            cal = tk.calendar
+            if cal is not None and not (isinstance(cal, dict) and not cal):
+                # Selon la version de yfinance, calendar est un dict ou un DataFrame
+                if isinstance(cal, dict):
+                    raw = cal.get("Earnings Date")
+                    if raw is not None:
+                        dates = raw if isinstance(raw, list) else [raw]
+                        today = date.today()
+                        future = []
+                        for d in dates:
+                            try:
+                                if hasattr(d, "date"):
+                                    d = d.date()
+                                elif isinstance(d, str):
+                                    d = datetime.strptime(d[:10], "%Y-%m-%d").date()
+                                if d > today:
+                                    future.append(d)
+                            except Exception:
+                                pass
+                        if future:
+                            result["earnings"] = min(future)
+                elif hasattr(cal, "loc"):          # DataFrame
+                    try:
+                        d = cal.loc["Earnings Date"].iloc[0]
+                        if hasattr(d, "date"):
+                            d = d.date()
+                        if d > date.today():
+                            result["earnings"] = d
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     except Exception:
         pass
@@ -287,14 +263,13 @@ def _fetch_one_beta_earnings(t: str) -> tuple[str, dict]:
 
 @st.cache_data(ttl=META_TTL, show_spinner=False)
 def fetch_beta_earnings(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    """Beta + Earnings — lent (rate-limit Yahoo), à déclencher manuellement."""
     results: dict[str, dict] = {}
-    empty = {"beta": None, "earnings": None, "last_earnings": None}
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_fetch_one_beta_earnings, t): t for t in yf_tickers}
+    empty: dict = {"name": "", "beta": None, "earnings": None}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_fetch_one_meta, t): t for t in yf_tickers}
         for future in as_completed(futures, timeout=300):
             try:
-                t, data = future.result(timeout=30)
+                t, data = future.result(timeout=20)
                 results[t] = data
             except Exception:
                 results[futures[future]] = dict(empty)
@@ -460,9 +435,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, be: dict[str, dict]) -> list[
         ratio  = compute_ratio(price, buy, exit_)
         score  = compute_score(ratio, r.get("note")) or r.get("score_sheet")
 
-        beta          = be_d.get("beta")
-        earnings      = be_d.get("earnings")
-        last_earnings = be_d.get("last_earnings")
+        beta     = be_d.get("beta")
+        earnings = be_d.get("earnings")
 
         # Colonne MAJ
         last_update = r.get("last_update")
