@@ -2,166 +2,169 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from math import ceil
-from typing import Iterable
 
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Page config
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.set_page_config(
-    page_title="Ma Watchlist Boursière",
+    page_title="Watchlist",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-REFRESH_TTL_SECONDS = 30 * 60
-DOWNLOAD_PERIOD = "5d"
+# ══════════════════════════════════════════════════════════════════════════════
+# Configuration — à modifier selon vos besoins
+# ══════════════════════════════════════════════════════════════════════════════
+
+SHEET_ID   = "1KQ0eolfB-UH-N-jQo2WDxsmVNT3I4IhiTEbdIfcPvbA"
+SHEET_NAME = "Travail"
+SHEET_CSV_URL = (
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+    f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
+)
+CSV_FALLBACK = "tickers.csv"
+
+REFRESH_TTL       = 30 * 60
+SHEET_TTL         = 3_600
+BATCH_SIZE        = 75
+DOWNLOAD_PERIOD   = "5d"
 DOWNLOAD_INTERVAL = "30m"
-BATCH_SIZE = 75
 
-EXCHANGE_MAP = {
-    "EPA": ".PA",
-    "ETR": ".DE",
-    "FRA": ".F",
-    "LON": ".L",
-    "AMS": ".AS",
-    "BIT": ".MI",
-    "BME": ".MC",
-    "STO": ".ST",
-    "SWX": ".SW",
-    "TYO": ".T",
-    "TSE": ".TO",
-    "HKG": ".HK",
-    "SGX": ".SI",
-    "HEL": ".HE",
-    "VIE": ".VI",
-    "CPH": ".CO",
-    "EBR": ".BR",
-    "WSE": ".WA",
-    "CVE": ".V",
-    "NYSE": "",
-    "NASDAQ": "",
+# ══════════════════════════════════════════════════════════════════════════════
+# Mapping Google Finance → Yahoo Finance
+# ══════════════════════════════════════════════════════════════════════════════
+
+EXCHANGE_MAP: dict[str, str] = {
+    "EPA": ".PA", "ETR": ".DE", "FRA": ".F",
+    "LON": ".L",  "AMS": ".AS", "BIT": ".MI",
+    "BME": ".MC", "STO": ".ST", "SWX": ".SW",
+    "TYO": ".T",  "TSE": ".TO", "HKG": ".HK",
+    "SGX": ".SI", "HEL": ".HE", "VIE": ".VI",
+    "CPH": ".CO", "EBR": ".BR", "WSE": ".WA",
+    "CVE": ".V",  "NYSE": "",   "NASDAQ": "",
 }
 
-MANUAL_OVERRIDES = {
-    "JST": "JST.DE",
-    "BETS-B": "BETS-B.ST",
+MANUAL_OVERRIDES: dict[str, str] = {
+    "JST":       "JST.DE",
+    "BETS-B":    "BETS-B.ST",
+    "MOUR":      "MOUR.BR",
+    "EPA:HAVAS": "HAVAS.AS",
+    "TSE:DHT.U": "DHT-U.TO",
+    "TSE:CTC.A": "CTC-A.TO",
+    "CPH:VAR":   "VAR.OL",
 }
 
-REQUIRED_COLUMNS = ["gf_ticker", "portif", "name"]
-OPTIONAL_NUMERIC_COLUMNS = ["note", "buy", "fair", "trim", "exit"]
-OPTIONAL_COLUMNS = OPTIONAL_NUMERIC_COLUMNS
+# ══════════════════════════════════════════════════════════════════════════════
+# Statuts & couleurs
+# ══════════════════════════════════════════════════════════════════════════════
+
+STATUT_ORDER: dict[str, int] = {
+    "Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9,
+}
+STATUT_COLOR: dict[str, str] = {
+    "Strong buy": "#1f8b4c", "Buy": "#6dbf4b", "Fair": "#d4b000",
+    "Trim": "#e67e22", "Exit": "#c0392b", "": "#64748b",
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Conversion de ticker
+# ══════════════════════════════════════════════════════════════════════════════
+
+def gf_to_yf(gf: str) -> str | None:
+    gf = str(gf).strip()
+    if not gf:
+        return None
+    if gf in MANUAL_OVERRIDES:
+        return MANUAL_OVERRIDES[gf]
+    if ":" not in gf:
+        return gf
+    exchange, symbol = gf.split(":", 1)
+    suffix = EXCHANGE_MAP.get(exchange)
+    if suffix is None:
+        return None
+    return f"{symbol}{suffix}"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Chargement des données
+# ══════════════════════════════════════════════════════════════════════════════
+
+SHEET_COL_MAP = {
+    "Ticker": "gf_ticker", "Société": "name", "Portif": "portif",
+    "Note": "note", "Buy": "buy", "Fair": "fair",
+    "Trim": "trim", "Exit": "exit", "URL": "url",
+}
+NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit"]
 
 
-class TickerMappingError(ValueError):
-    pass
+@st.cache_data(ttl=SHEET_TTL, show_spinner=False)
+def load_tickers() -> tuple[pd.DataFrame, str]:
+    source = "Google Sheet"
+    try:
+        df = pd.read_csv(SHEET_CSV_URL, header=0)
+    except Exception:
+        df = pd.read_csv(CSV_FALLBACK, header=0)
+        source = "tickers.csv (fallback)"
 
+    df = df.rename(columns={k: v for k, v in SHEET_COL_MAP.items() if k in df.columns})
 
+    for col in list(SHEET_COL_MAP.values()):
+        if col not in df.columns:
+            df[col] = pd.NA
 
-def chunked(items: list[str], size: int) -> Iterable[list[str]]:
+    df = df[df["gf_ticker"].notna()].copy()
+    df = df[df["gf_ticker"].astype(str).str.strip() != ""].copy()
+    df["portif"] = pd.to_numeric(df["portif"], errors="coerce").fillna(0).astype(int)
+    for col in NUMERIC_COLS:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["yf_ticker"] = df["gf_ticker"].astype(str).apply(gf_to_yf)
+    return df.reset_index(drop=True), source
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Récupération des cours Yahoo Finance
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _chunked(items: list, size: int):
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
 
-
-def gf_to_yf(gf_ticker: str) -> str:
-    raw = str(gf_ticker).strip()
-    if not raw:
-        raise TickerMappingError("Ticker vide")
-
-    if raw in MANUAL_OVERRIDES:
-        return MANUAL_OVERRIDES[raw]
-
-    if ":" not in raw:
-        return raw
-
-    exchange, symbol = raw.split(":", 1)
-    suffix = EXCHANGE_MAP.get(exchange)
-    if suffix is None:
-        raise TickerMappingError(f"Place non gérée: {exchange}")
-    if not symbol:
-        raise TickerMappingError("Code ticker vide")
-    return f"{symbol}{suffix}"
+def _closes(data: pd.DataFrame, ticker: str, multi: bool) -> pd.Series:
+    try:
+        s = data[ticker]["Close"] if multi else data["Close"]
+        s = s.dropna().astype(float)
+        return s if isinstance(s, pd.Series) else pd.Series(dtype=float)
+    except Exception:
+        return pd.Series(dtype=float)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_tickers(path: str = "tickers.csv") -> tuple[pd.DataFrame, list[str]]:
-    df = pd.read_csv(path)
-
-    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing:
-        raise ValueError(f"Colonnes manquantes dans tickers.csv: {', '.join(missing)}")
-
-    for col in OPTIONAL_COLUMNS:
-        if col not in df.columns:
-            df[col] = pd.NA
-
-    mapping_errors: list[str] = []
-    yf_tickers: list[str | None] = []
-
-    for value in df["gf_ticker"].astype(str):
-        try:
-            yf_tickers.append(gf_to_yf(value))
-        except TickerMappingError as exc:
-            yf_tickers.append(None)
-            mapping_errors.append(f"{value}: {exc}")
-
-    df = df.copy()
-    df["yf_ticker"] = yf_tickers
-    df["portif"] = pd.to_numeric(df["portif"], errors="coerce").fillna(0).astype(int)
-
-    for col in OPTIONAL_NUMERIC_COLUMNS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df, mapping_errors
-
-
-
-def _extract_close_series(data: pd.DataFrame, ticker: str, multi: bool) -> pd.Series:
-    if multi:
-        if ticker not in data.columns.get_level_values(0):
-            return pd.Series(dtype="float64")
-        series = data[ticker]["Close"]
-    else:
-        if "Close" not in data.columns:
-            return pd.Series(dtype="float64")
-        series = data["Close"]
-
-    series = series.dropna()
-    if isinstance(series, pd.DataFrame):
-        return pd.Series(dtype="float64")
-    return series.astype("float64")
-
-
-
-def _last_price_and_previous_close(closes: pd.Series) -> tuple[float | None, float | None]:
+def _price_chg(closes: pd.Series) -> tuple[float | None, float | None]:
     if closes.empty:
         return None, None
-
-    last_price = float(closes.iloc[-1])
+    price = float(closes.iloc[-1])
     dates = pd.to_datetime(closes.index).tz_localize(None).normalize()
-    last_date = dates[-1]
-    previous_session = closes[dates < last_date]
-    previous_close = float(previous_session.iloc[-1]) if not previous_session.empty else None
-    return last_price, previous_close
+    prev  = closes[dates < dates[-1]]
+    chg   = None
+    if not prev.empty:
+        p0 = float(prev.iloc[-1])
+        if p0:
+            chg = (price - p0) / p0 * 100
+    return price, chg
 
 
-@st.cache_data(ttl=REFRESH_TTL_SECONDS, show_spinner=False)
-def fetch_prices(yf_tickers: list[str]) -> tuple[dict[str, dict[str, float | None]], list[str], str]:
-    results: dict[str, dict[str, float | None]] = {}
-    failures: list[str] = []
-
-    tickers = [ticker for ticker in yf_tickers if ticker]
-    if not tickers:
-        fetched_at = datetime.now(timezone.utc).isoformat()
-        return results, failures, fetched_at
-
-    for batch in chunked(tickers, BATCH_SIZE):
-        batch_str = " ".join(batch)
+@st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
+def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+    results: dict[str, dict] = {}
+    for batch in _chunked(list(yf_tickers), BATCH_SIZE):
         try:
             data = yf.download(
-                tickers=batch_str,
+                tickers=" ".join(batch),
                 period=DOWNLOAD_PERIOD,
                 interval=DOWNLOAD_INTERVAL,
                 auto_adjust=False,
@@ -170,236 +173,284 @@ def fetch_prices(yf_tickers: list[str]) -> tuple[dict[str, dict[str, float | Non
                 threads=True,
                 prepost=False,
             )
-        except Exception as exc:
-            failures.extend([f"{ticker}: {exc}" for ticker in batch])
+        except Exception:
+            for t in batch:
+                results[t] = {"price": None, "chg": None}
             continue
-
-        if data.empty:
-            failures.extend([f"{ticker}: aucune donnée renvoyée" for ticker in batch])
-            continue
-
         multi = len(batch) > 1
-        for ticker in batch:
-            try:
-                closes = _extract_close_series(data, ticker, multi)
-                price, prev_close = _last_price_and_previous_close(closes)
-                if price is None:
-                    failures.append(f"{ticker}: aucune clôture exploitable")
-                    results[ticker] = {"price": None, "chg": None}
-                    continue
+        for t in batch:
+            price, chg = _price_chg(_closes(data, t, multi))
+            results[t] = {"price": price, "chg": chg}
+    return results
 
-                chg = None
-                if prev_close not in (None, 0):
-                    chg = (price - prev_close) / prev_close * 100
+# ══════════════════════════════════════════════════════════════════════════════
+# Calculs métier
+# ══════════════════════════════════════════════════════════════════════════════
 
-                results[ticker] = {"price": price, "chg": chg}
-            except Exception as exc:
-                failures.append(f"{ticker}: {exc}")
-                results[ticker] = {"price": None, "chg": None}
-
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    return results, failures, fetched_at
-
-
-
-def fmt_price(value: float | None) -> str:
-    if value is None or pd.isna(value):
+def compute_statut(price, buy, fair, trim, exit_) -> str:
+    vals = [price, buy, fair, trim, exit_]
+    if any(v is None or (isinstance(v, float) and pd.isna(v)) for v in vals):
         return ""
-    return f"{value:,.2f}"
-
-
-
-def fmt_pct(value: float | None) -> str:
-    if value is None or pd.isna(value):
-        return ""
-    return f"{value:+.2f}%"
-
-
-
-def status_label(price: float | None, buy: float | None, fair: float | None, trim: float | None, exit_: float | None) -> str:
-    if price is None or pd.isna(price):
-        return ""
-    if any(pd.isna(v) for v in [buy, fair, trim, exit_]):
-        return ""
-
-    p = float(price)
-    if p <= float(buy):
-        return "Strong buy"
-    if p <= float(fair):
-        return "Buy"
-    if p <= float(trim):
-        return "Fair"
-    if p <= float(exit_):
-        return "Trim"
+    p, b, f, k, e = (float(v) for v in vals)
+    if p <= b: return "Strong buy"
+    if p <= f: return "Buy"
+    if p <= k: return "Fair"
+    if p <= e: return "Trim"
     return "Exit"
 
 
+def compute_ratio(price, buy, exit_) -> float | None:
+    try:
+        p, b, e = float(price), float(buy), float(exit_)
+        if e <= b: return None
+        return max(0.0, min(1.0, (e - p) / (e - b)))
+    except Exception:
+        return None
 
-def make_table(df_sub: pd.DataFrame, prices: dict[str, dict[str, float | None]]) -> pd.DataFrame:
+
+def compute_score(ratio, note) -> float | None:
+    try:
+        return round((0.6 * float(ratio) + 0.4 * float(note) / 100) * 100, 1)
+    except Exception:
+        return None
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Formatage HTML
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fmt_price(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{float(v):,.2f}"
+
+def fmt_note(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return str(int(float(v)))
+
+def fmt_score(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{float(v):.1f}"
+
+def html_var(chg) -> str:
+    if chg is None or (isinstance(chg, float) and pd.isna(chg)):
+        return '<span style="color:#64748b">—</span>'
+    c = "#22c55e" if chg >= 0 else "#ef4444"
+    a = "▲" if chg >= 0 else "▼"
+    return f'<span style="color:{c}">{a}&nbsp;{abs(chg):.2f}%</span>'
+
+def html_bar(ratio, statut) -> str:
+    if ratio is None: return ""
+    color = STATUT_COLOR.get(statut, "#64748b")
+    pct   = ratio * 100
+    return (
+        '<div style="width:72px;height:9px;background:#1e293b;'
+        'border-radius:5px;overflow:hidden;display:inline-block">'
+        f'<div style="width:{pct:.1f}%;height:100%;background:{color};'
+        'border-radius:5px"></div></div>'
+    )
+
+def html_statut(statut) -> str:
+    c = STATUT_COLOR.get(statut, "#64748b")
+    return f'<span style="color:{c};font-weight:600">{statut or "—"}</span>'
+
+def html_link(url) -> str:
+    if not url or (isinstance(url, float) and pd.isna(url)): return ""
+    u = str(url).strip()
+    if not u.startswith("http"): return ""
+    return (
+        f'<a href="{u}" target="_blank" rel="noopener" '
+        'title="Analyse ChatGPT" '
+        'style="color:#7dd3fc;font-size:1rem;text-decoration:none">🔗</a>'
+    )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Construction des lignes
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_rows(df_sub: pd.DataFrame, prices: dict) -> list[dict]:
     rows = []
-    for _, row in df_sub.iterrows():
-        quote = prices.get(row["yf_ticker"], {}) if pd.notna(row["yf_ticker"]) else {}
-        price = quote.get("price")
-        chg = quote.get("chg")
-        rows.append(
-            {
-                "Ticker": row["gf_ticker"],
-                "Société": row["name"],
-                "Prix": fmt_price(price),
-                "Var %": fmt_pct(chg),
-                "_chg": chg,
-                "Note": int(row["note"]) if pd.notna(row["note"]) else "",
-                "Buy": fmt_price(row["buy"]),
-                "Fair": fmt_price(row["fair"]),
-                "Trim": fmt_price(row["trim"]),
-                "Exit": fmt_price(row["exit"]),
-                "Statut": status_label(price, row["buy"], row["fair"], row["trim"], row["exit"]),
-            }
-        )
-    return pd.DataFrame(rows)
+    for _, r in df_sub.iterrows():
+        yf_t   = r.get("yf_ticker")
+        q      = prices.get(str(yf_t), {}) if pd.notna(yf_t) else {}
+        price  = q.get("price")
+        chg    = q.get("chg")
+        buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
+        statut = compute_statut(price, buy, fair, trim, exit_)
+        ratio  = compute_ratio(price, buy, exit_)
+        score  = compute_score(ratio, r.get("note"))
+        rows.append({
+            "_statut_order": STATUT_ORDER.get(statut, 9),
+            "_score":        score if score is not None else -1.0,
+            "_chg":          chg,
+            "_ticker":       str(r["gf_ticker"]),
+            "_name":         str(r.get("name", "")),
+            "_statut":       statut,
+            "Ticker":        f'<code style="color:#93c5fd;font-size:.8rem">{r["gf_ticker"]}</code>',
+            "Société":       str(r.get("name", "")),
+            "Prix":          fmt_price(price),
+            "Var %":         html_var(chg),
+            "Barre":         html_bar(ratio, statut),
+            "Qualité":       fmt_note(r.get("note")),
+            "Buy":           fmt_price(buy),
+            "Fair":          fmt_price(fair),
+            "Trim":          fmt_price(trim),
+            "Exit":          fmt_price(exit_),
+            "Score":         fmt_score(score),
+            "Statut":        html_statut(statut),
+            "🔗":            html_link(r.get("url")),
+        })
+    return rows
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Rendu HTML
+# ══════════════════════════════════════════════════════════════════════════════
+
+DISPLAY_COLS = [
+    "Ticker", "Société", "Prix", "Var %", "Barre",
+    "Qualité", "Buy", "Fair", "Trim", "Exit",
+    "Score", "Statut", "🔗",
+]
+CENTER = {"Qualité", "Score", "Barre", "🔗", "Statut"}
+
+CSS = """<style>
+.wl-wrap{overflow-x:auto;max-height:72vh;overflow-y:auto;
+  border-radius:8px;border:1px solid #1e293b}
+.wl-table{width:100%;border-collapse:collapse;font-size:.82rem;color:#e2e8f0}
+.wl-table thead tr{position:sticky;top:0;z-index:2}
+.wl-table th{background:#0f172a;color:#94a3b8;font-weight:600;
+  padding:9px 11px;text-align:left;border-bottom:2px solid #334155;
+  white-space:nowrap}
+.wl-table th.c{text-align:center}
+.wl-table td{padding:6px 11px;border-bottom:1px solid #1a2035;
+  vertical-align:middle;white-space:nowrap}
+.wl-table td.c{text-align:center}
+.wl-table tbody tr:hover td{background:#ffffff08}
+</style>"""
 
 
-
-def render_table(df_sub: pd.DataFrame, prices: dict[str, dict[str, float | None]], search_key: str, sort_key: str) -> None:
-    table = make_table(df_sub, prices)
-    if table.empty:
+def render_table(rows: list[dict]) -> None:
+    if not rows:
         st.info("Aucun titre.")
         return
+    th = "".join(
+        f'<th class="{"c" if c in CENTER else ""}">{c}</th>'
+        for c in DISPLAY_COLS
+    )
+    trs = []
+    for r in rows:
+        tds = "".join(
+            f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
+            for c in DISPLAY_COLS
+        )
+        trs.append(f"<tr>{tds}</tr>")
+    st.markdown(
+        CSS + f'<div class="wl-wrap"><table class="wl-table">'
+        f'<thead><tr>{th}</tr></thead>'
+        f'<tbody>{"".join(trs)}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
 
-    left, right = st.columns([2, 1])
-    with left:
-        search = st.text_input("Recherche", key=search_key, placeholder="Ticker ou société")
-    with right:
+# ══════════════════════════════════════════════════════════════════════════════
+# Rendu d'un onglet
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_tab(df_sub: pd.DataFrame, prices: dict, key: str) -> None:
+    rows = build_rows(df_sub, prices)
+
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        search = st.text_input(
+            "Recherche", key=f"{key}_s",
+            placeholder="🔍 Ticker ou société…", label_visibility="collapsed",
+        )
+    with c2:
         sort_choice = st.selectbox(
             "Tri",
-            ["Ticker", "Note ↓", "Var % ↑", "Var % ↓", "Statut"],
-            key=sort_key,
+            ["Statut + Score", "Ticker A→Z", "Qualité ↓", "Score ↓", "Var % ↑", "Var % ↓"],
+            key=f"{key}_t",
+        )
+    with c3:
+        sf = st.selectbox(
+            "Statut",
+            ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"],
+            key=f"{key}_f",
         )
 
     if search:
-        mask = (
-            table["Ticker"].astype(str).str.contains(search, case=False, na=False)
-            | table["Société"].astype(str).str.contains(search, case=False, na=False)
-        )
-        table = table[mask]
+        q = search.lower()
+        rows = [r for r in rows if q in r["_ticker"].lower() or q in r["_name"].lower()]
+    if sf != "Tous":
+        rows = [r for r in rows if r["_statut"] == sf]
 
-    if sort_choice == "Note ↓":
-        table = table.sort_values(by="Note", ascending=False, na_position="last")
+    if sort_choice == "Statut + Score":
+        rows.sort(key=lambda r: (r["_statut_order"], -r["_score"]))
+    elif sort_choice == "Ticker A→Z":
+        rows.sort(key=lambda r: r["_ticker"])
+    elif sort_choice in ("Qualité ↓", "Score ↓"):
+        rows.sort(key=lambda r: -r["_score"])
     elif sort_choice == "Var % ↑":
-        table = table.sort_values(by="_chg", ascending=False, na_position="last")
+        rows.sort(key=lambda r: (r["_chg"] is None, -(r["_chg"] or 0)))
     elif sort_choice == "Var % ↓":
-        table = table.sort_values(by="_chg", ascending=True, na_position="last")
-    elif sort_choice == "Statut":
-        table = table.sort_values(by=["Statut", "Ticker"], ascending=[True, True], na_position="last")
-    else:
-        table = table.sort_values(by="Ticker", ascending=True)
+        rows.sort(key=lambda r: (r["_chg"] is None, r["_chg"] or 0))
 
-    display_cols = ["Ticker", "Société", "Prix", "Var %", "Note", "Buy", "Fair", "Trim", "Exit", "Statut"]
-    st.dataframe(table[display_cols], use_container_width=True, hide_index=True, height=650)
+    render_table(rows)
 
+    missing = [r["_ticker"] for r in rows if r["Prix"] == "—"]
+    if missing:
+        with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
+            st.write(", ".join(missing))
 
+# ══════════════════════════════════════════════════════════════════════════════
+# APP PRINCIPALE
+# ══════════════════════════════════════════════════════════════════════════════
 
-def render_summary(total_count: int, portfolio_count: int, watchlist_count: int, fetched_at: str | None) -> None:
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Titres", total_count)
-    with col2:
-        st.metric("Portefeuille", portfolio_count)
-    with col3:
-        st.metric("Watchlist", watchlist_count)
-    with col4:
-        if fetched_at:
-            ts = pd.Timestamp(fetched_at).tz_convert("Europe/Luxembourg")
-            label = ts.strftime("%Y-%m-%d %H:%M")
-        else:
-            label = "inconnu"
-        st.metric("Dernière MAJ", label)
-
-
-
-def render_failures(mapping_errors: list[str], fetch_failures: list[str], tickers_df: pd.DataFrame, prices: dict[str, dict[str, float | None]]) -> None:
-    unresolved = []
-    for _, row in tickers_df.iterrows():
-        yf_ticker = row["yf_ticker"]
-        if pd.isna(yf_ticker):
-            continue
-        if prices.get(yf_ticker, {}).get("price") is None:
-            unresolved.append(f"{row['gf_ticker']} -> {yf_ticker}")
-
-    total_issues = len(mapping_errors) + len(fetch_failures) + len(unresolved)
-    if total_issues == 0:
-        return
-
-    with st.expander(f"Problèmes détectés ({total_issues})"):
-        if mapping_errors:
-            st.write("Mapping ticker non résolu :")
-            st.code("\n".join(mapping_errors))
-        if fetch_failures:
-            st.write("Echecs de récupération :")
-            st.code("\n".join(fetch_failures[:200]))
-        if unresolved:
-            st.write("Tickers sans prix exploitable :")
-            st.code("\n".join(unresolved[:200]))
-
-
-st.title("Ma Watchlist Boursière")
+st.title("📈 Watchlist Boursière")
 st.caption(
-    "Source : Yahoo Finance via yfinance. Données gratuites, non officielles, suffisantes pour une watchlist perso, pas pour un usage critique."
+    "Cours : Yahoo Finance via yfinance — données gratuites et non officielles."
 )
 
-try:
-    tickers_df, mapping_errors = load_tickers()
-except Exception as exc:
-    st.error(str(exc))
-    st.stop()
+with st.spinner("Chargement de la liste de titres…"):
+    try:
+        tickers_df, data_source = load_tickers()
+    except Exception as exc:
+        st.error(f"Impossible de charger les données : {exc}")
+        st.stop()
 
-valid_tickers = [ticker for ticker in tickers_df["yf_ticker"].dropna().astype(str).tolist() if ticker]
-portfolio_df = tickers_df[tickers_df["portif"] == 1].copy()
-watchlist_df = tickers_df[tickers_df["portif"] != 1].copy()
+pf_df = tickers_df[tickers_df["portif"] == 1].copy()
+wl_df = tickers_df[tickers_df["portif"] != 1].copy()
+valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
-render_summary(
-    total_count=len(tickers_df),
-    portfolio_count=len(portfolio_df),
-    watchlist_count=len(watchlist_df),
-    fetched_at=st.session_state.get("last_fetch_iso"),
-)
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Total", len(tickers_df))
+m2.metric("Portefeuille", len(pf_df))
+m3.metric("Watchlist", len(wl_df))
+m4.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 
-left, right = st.columns([1, 3])
-with left:
-    refresh_clicked = st.button("Actualiser maintenant", type="primary", use_container_width=True)
-with right:
+rc1, rc2 = st.columns([1, 4])
+with rc1:
+    if st.button("🔄 Actualiser", type="primary", use_container_width=True):
+        fetch_prices.clear()
+with rc2:
+    n_batches = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
     st.caption(
-        f"Cache prix : {REFRESH_TTL_SECONDS // 60} min. Batch size : {BATCH_SIZE}. Intervalle Yahoo : {DOWNLOAD_INTERVAL}."
+        f"Source : **{data_source}** · {len(valid_yf)} tickers · "
+        f"{n_batches} paquets Yahoo · cache {REFRESH_TTL // 60} min"
     )
 
-if refresh_clicked:
-    fetch_prices.clear()
+with st.spinner(f"Récupération de {len(valid_yf)} cours…"):
+    prices = fetch_prices(valid_yf)
 
-with st.spinner(f"Récupération des cours pour {len(valid_tickers)} titres..."):
-    prices, fetch_failures, fetched_at = fetch_prices(valid_tickers)
+st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
-st.session_state["last_fetch_iso"] = fetched_at
+ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
+ko = len(valid_yf) - ok
+s1, s2, _ = st.columns(3)
+s1.metric("✅ Prix récupérés", ok)
+s2.metric("⚠️ Prix manquants", ko)
 
-resolved_count = sum(1 for ticker in valid_tickers if prices.get(ticker, {}).get("price") is not None)
-unresolved_count = len(valid_tickers) - resolved_count
-batch_count = ceil(len(valid_tickers) / BATCH_SIZE) if valid_tickers else 0
+st.divider()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Prix récupérés", resolved_count)
-with col2:
-    st.metric("Prix manquants", unresolved_count)
-with col3:
-    st.metric("Paquets Yahoo", batch_count)
-
-portfolio_tab, watchlist_tab = st.tabs(
-    [f"Portefeuille ({len(portfolio_df)})", f"Watchlist ({len(watchlist_df)})"]
-)
-
-with portfolio_tab:
-    render_table(portfolio_df, prices, search_key="search_pf", sort_key="sort_pf")
-
-with watchlist_tab:
-    render_table(watchlist_df, prices, search_key="search_wl", sort_key="sort_wl")
-
-render_failures(mapping_errors, fetch_failures, tickers_df, prices)
+tab1, tab2 = st.tabs([f"💼 Portefeuille ({len(pf_df)})", f"👁 Watchlist ({len(wl_df)})"])
+with tab1:
+    render_tab(pf_df, prices, key="pf")
+with tab2:
+    render_tab(wl_df, prices, key="wl")

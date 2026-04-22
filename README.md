@@ -1,60 +1,67 @@
-# Ma Watchlist Boursière, version corrigée
+# 📈 Watchlist Boursière
 
-## Ce qui change
+## Déploiement Streamlit Cloud (gratuit)
 
-Cette version corrige les défauts structurels du prototype initial :
+### Étape 1 — Rendre le Google Sheet public
+Dans ton Google Sheet :
+**Partager → Modifier → "Toute personne disposant du lien" → Lecteur**
 
-- plus de boucle `sleep(1) + rerun()`
-- cache propre des prix pendant 30 minutes
-- téléchargement par paquets pour éviter un appel monolithique fragile
-- validation des tickers Google Finance -> Yahoo
-- affichage explicite des tickers non résolus ou non récupérés
-- calcul de variation basé sur des barres `30m`, cohérent avec un refresh toutes les 20 a 30 minutes
+Sans ça, l'app ne peut pas lire le sheet et utilisera `tickers.csv` en fallback.
 
-## Limites assumées
-
-- source gratuite et non officielle : Yahoo Finance via `yfinance`
-- ce n'est pas une infrastructure de marché professionnelle
-- certaines places ou certains tickers exotiques peuvent demander un override manuel
-- les données peuvent etre absentes ou irrégulières selon la place, l'heure et Yahoo
-
-## Déploiement Streamlit Cloud
-
-Fichiers à pousser dans le dépôt GitHub :
-
-- `app.py`  -> prends `app_corrected.py` et renomme-le en `app.py`
-- `tickers.csv`
+### Étape 2 — Repo GitHub
+Crée un dépôt GitHub **public** et dépose ces 4 fichiers :
+- `app.py`
+- `tickers.csv` (fallback si le sheet est privé)
 - `requirements.txt`
+- `README.md`
 
-## Format attendu pour `tickers.csv`
+### Étape 3 — Déploiement
+1. Va sur **share.streamlit.io**
+2. Connecte avec GitHub
+3. "New app" → ton dépôt → branche `main` → `app.py`
+4. Deploy
 
-Colonnes obligatoires :
+→ Tu obtiens une URL accessible depuis Android (ajoute en raccourci écran d'accueil via Chrome)
 
-- `gf_ticker`
-- `portif`
-- `name`
+---
 
-Colonnes optionnelles :
+## Ajouter / modifier des tickers
 
-- `note`
-- `buy`
-- `fair`
-- `trim`
-- `exit`
+**Méthode principale (recommandée) :** directement dans l'onglet `Travail` de ton Google Sheet.
+L'app relit le sheet toutes les heures automatiquement.
 
-## Paramètres principaux
+Colonnes utilisées par l'app :
+| Colonne Google Sheet | Rôle |
+|---|---|
+| `Ticker` | Ticker format Google Finance |
+| `Société` | Nom de la société |
+| `Portif` | 1 = Portefeuille, 0 = Watchlist |
+| `Note` | Score de qualité (0–100) |
+| `Buy / Fair / Trim / Exit` | Niveaux de prix |
+| `URL` | Lien analyse ChatGPT |
 
-Dans `app.py`, tu peux modifier :
+**Fallback :** si le sheet est privé, modifie `tickers.csv` et pousse sur GitHub.
 
-- `REFRESH_TTL_SECONDS = 30 * 60`
-- `DOWNLOAD_PERIOD = "5d"`
-- `DOWNLOAD_INTERVAL = "30m"`
-- `BATCH_SIZE = 75`
+---
 
-## Lecture correcte du fonctionnement
+## Overrides de tickers manuels
 
-- l'app ne tourne pas en tâche de fond toute seule
-- elle rafraîchit les données quand un utilisateur ouvre ou recharge l'interface
-- le bouton `Actualiser maintenant` force un nouveau fetch en vidant le cache
+Si un ticker est mal converti, ajoute-le dans `MANUAL_OVERRIDES` dans `app.py` :
+```python
+MANUAL_OVERRIDES = {
+    "EPA:HAVAS": "HAVAS.AS",   # Havas → Amsterdam
+    "TSE:DHT.U": "DHT-U.TO",  # DRI Healthcare Trust
+    "TSE:CTC.A": "CTC-A.TO",  # Canadian Tire classe A
+    "CPH:VAR":   "VAR.OL",    # Vår Energi → Oslo
+    "MOUR":      "MOUR.BR",   # Moury Construct → Bruxelles
+    # ajouter ici...
+}
+```
 
-Si tu veux un vrai refresh autonome, il faut un scheduler externe ou une architecture différente.
+## Paramètres
+```python
+REFRESH_TTL       = 30 * 60   # cache des cours (secondes)
+DOWNLOAD_PERIOD   = "5d"      # historique Yahoo pour calcul variation
+DOWNLOAD_INTERVAL = "30m"     # granularité des barres Yahoo
+BATCH_SIZE        = 75        # tickers par paquet Yahoo
+```
