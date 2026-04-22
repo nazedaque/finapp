@@ -192,14 +192,59 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 
 @st.cache_data(ttl=NAMES_TTL, show_spinner=False)
 def fetch_missing_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
+    """
+    Récupère les noms via l'API Yahoo Finance quote en mode batch
+    (50 tickers par requête). Fallback sur yf.Ticker().info si l'API échoue.
+    """
+    import requests
+
     names: dict[str, str] = {}
-    for t in yf_tickers:
-        try:
-            info = yf.Ticker(t).info
-            name = info.get("shortName") or info.get("longName") or ""
-            names[t] = str(name).strip()
-        except Exception:
-            names[t] = ""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+
+    failed_batches: list[str] = []
+
+    for batch in _chunked(list(yf_tickers), 50):
+        symbols = ",".join(batch)
+        fetched = False
+        for host in ("query1", "query2"):
+            try:
+                url = (
+                    f"https://{host}.finance.yahoo.com/v7/finance/quote"
+                    f"?symbols={symbols}&fields=shortName,longName"
+                )
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code != 200:
+                    continue
+                results = resp.json().get("quoteResponse", {}).get("result", [])
+                for q in results:
+                    sym  = q.get("symbol", "")
+                    name = q.get("shortName") or q.get("longName") or ""
+                    if sym:
+                        names[sym] = str(name).strip()
+                fetched = True
+                break
+            except Exception:
+                continue
+        if not fetched:
+            failed_batches.extend(batch)
+
+    # Fallback individuel pour les tickers dont le batch a échoué (limité à 30)
+    for t in failed_batches[:30]:
+        if t not in names:
+            try:
+                info = yf.Ticker(t).info
+                name = info.get("shortName") or info.get("longName") or ""
+                names[t] = str(name).strip()
+            except Exception:
+                names[t] = ""
+
     return names
 
 # ══════════════════════════════════════════════════════════════════════════════
