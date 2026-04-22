@@ -99,7 +99,7 @@ def parse_num(v) -> float | None:
     """
     if v is None:
         return None
-    s = str(v).strip().replace("\xa0", "").replace(" ", "")
+    s = str(v).strip().replace("\u202f", "").replace("\xa0", "").replace(" ", "")
     if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""):
         return None
     # Entier avec séparateur de milliers (virgule) : '2,300' ou '1,234,567'
