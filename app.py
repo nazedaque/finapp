@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime, timezone
-from math import ceil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -29,7 +29,7 @@ SHEET_CSV_URL = (
 CSV_FALLBACK      = "tickers.csv"
 REFRESH_TTL       = 30 * 60
 SHEET_TTL         = 3_600
-NAMES_TTL         = 86_400   # noms en cache 24h
+META_TTL          = 86_400   # 24h pour noms, beta, earnings
 BATCH_SIZE        = 75
 DOWNLOAD_PERIOD   = "5d"
 DOWNLOAD_INTERVAL = "30m"
@@ -47,7 +47,6 @@ EXCHANGE_MAP: dict[str, str] = {
     "CPH": ".CO", "EBR": ".BR", "WSE": ".WA",
     "CVE": ".V",  "NYSE": "",   "NASDAQ": "",
 }
-
 MANUAL_OVERRIDES: dict[str, str] = {
     "JST":       "JST.DE",
     "BETS-B":    "BETS-B.ST",
@@ -69,72 +68,78 @@ STATUT_COLOR = {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Layout : colonnes et largeurs (identiques entre onglets)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DISPLAY_COLS = [
+    "Ticker", "Société", "Prix", "Var %",
+    "Score", "Buy", "Fair", "Trim", "Exit",
+    "Qualité", "Beta", "Statut", "Earnings", "🔗",
+]
+
+COL_WIDTHS = {
+    "Ticker":   "100px",
+    "Société":  "220px",
+    "Prix":     "82px",
+    "Var %":    "82px",
+    "Score":    "55px",
+    "Buy":      "78px",
+    "Fair":     "78px",
+    "Trim":     "78px",
+    "Exit":     "78px",
+    "Qualité":  "62px",
+    "Beta":     "60px",
+    "Statut":   "92px",
+    "Earnings": "100px",
+    "🔗":       "32px",
+}
+
+CENTER = {"Prix", "Var %", "Score", "Buy", "Fair", "Trim", "Exit",
+          "Qualité", "Beta", "Statut", "Earnings", "🔗"}
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
 # ══════════════════════════════════════════════════════════════════════════════
 
 def normalize_col(s: str) -> str:
     nfkd = unicodedata.normalize("NFD", str(s))
-    ascii_ = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
-    return ascii_.strip().lower()
+    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn").strip().lower()
 
 
 def gf_to_yf(gf: str) -> str | None:
     gf = str(gf).strip()
-    if not gf:
-        return None
-    if gf in MANUAL_OVERRIDES:
-        return MANUAL_OVERRIDES[gf]
-    if ":" not in gf:
-        return gf
+    if not gf: return None
+    if gf in MANUAL_OVERRIDES: return MANUAL_OVERRIDES[gf]
+    if ":" not in gf: return gf
     exchange, symbol = gf.split(":", 1)
     suffix = EXCHANGE_MAP.get(exchange)
     return f"{symbol}{suffix}" if suffix is not None else None
 
 
 def parse_num(v) -> float | None:
-    """
-    Parse robuste des nombres exportés par Google Sheets (locale FR).
-    Gère : virgule décimale '20,36', séparateur de milliers '2,300',
-    et nombres purs '2300', '900'.
-    """
-    if v is None:
-        return None
+    if v is None: return None
     s = str(v).strip().replace("\u202f", "").replace("\xa0", "").replace(" ", "")
-    if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""):
-        return None
-    # Entier avec séparateur de milliers (virgule) : '2,300' ou '1,234,567'
+    if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""): return None
     if re.match(r"^\d{1,3}(,\d{3})+$", s):
         return float(s.replace(",", ""))
-    # Milliers + décimale : '1,234,56'
     if re.match(r"^\d{1,3}(,\d{3})+,\d{1,2}$", s):
         parts = s.split(",")
         return float("".join(parts[:-1]) + "." + parts[-1])
-    # Décimale virgule standard : '20,36'
     if "," in s:
         return float(s.replace(".", "").replace(",", "."))
-    # Milliers avec point : '1.234'
     if re.match(r"^\d{1,3}(\.\d{3})+$", s):
         return float(s.replace(".", ""))
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    try: return float(s)
+    except ValueError: return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Chargement du sheet
 # ══════════════════════════════════════════════════════════════════════════════
 
 SHEET_COL_NORMALIZED = {
-    "ticker":      "gf_ticker",
-    "societe":     "name",
-    "portif":      "portif",
-    "note":        "note",
-    "buy":         "buy",
-    "fair":        "fair",
-    "trim":        "trim",
-    "exit":        "exit",
-    "url":         "url",
-    "spot":        "spot_sheet",
+    "ticker": "gf_ticker", "societe": "name", "portif": "portif",
+    "note": "note", "buy": "buy", "fair": "fair", "trim": "trim",
+    "exit": "exit", "url": "url", "spot": "spot_sheet",
     "score mixte": "score_sheet",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
@@ -150,83 +155,73 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             df = pd.read_csv(CSV_FALLBACK, header=0, dtype=str)
             source = "tickers.csv (fallback)"
         except Exception as exc:
-            raise RuntimeError(f"Impossible de charger les données : {exc}") from exc
+            raise RuntimeError(str(exc)) from exc
 
-    # Renommage robuste (insensible aux accents et à la casse)
-    rename_map = {}
-    for col in df.columns:
-        norm = normalize_col(col)
-        if norm in SHEET_COL_NORMALIZED:
-            rename_map[col] = SHEET_COL_NORMALIZED[norm]
+    rename_map = {c: SHEET_COL_NORMALIZED[normalize_col(c)]
+                  for c in df.columns if normalize_col(c) in SHEET_COL_NORMALIZED}
     df = df.rename(columns=rename_map)
+    for col in SHEET_COL_NORMALIZED.values():
+        if col not in df.columns: df[col] = pd.NA
 
-    for col in list(SHEET_COL_NORMALIZED.values()):
-        if col not in df.columns:
-            df[col] = pd.NA
-
-    # Supprimer lignes vides ou header dupliqué
     df = df[df["gf_ticker"].notna()].copy()
     df = df[~df["gf_ticker"].astype(str).str.strip().isin(["", "Ticker", "gf_ticker"])].copy()
-
-    # portif : 1 = portefeuille, 0 = watchlist
     df["portif"] = df["portif"].map(
-        lambda v: 1 if str(v).strip() in ("1", "TRUE", "True", "true") else 0
-    )
-
-    # Noms : nettoyer les erreurs de formule
+        lambda v: 1 if str(v).strip() in ("1", "TRUE", "True", "true") else 0)
     df["name"] = df["name"].apply(
-        lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip()
-    )
-
-    # Colonnes numériques
+        lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip())
     for col in NUMERIC_COLS:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_num)
-
+        if col in df.columns: df[col] = df[col].apply(parse_num)
     df["yf_ticker"] = df["gf_ticker"].astype(str).apply(gf_to_yf)
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Noms manquants via yfinance
+# Métadonnées Yahoo : nom, beta, earnings (en parallèle, cache 24h)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _get_name_for_ticker(t: str) -> tuple[str, str]:
-    """
-    Récupère le nom d'un ticker via l'endpoint chart de Yahoo Finance.
-    L'endpoint chart (/v8/finance/chart/) inclut meta.shortName dans sa réponse
-    et est le même que celui utilisé pour les cours — donc fiable pour toutes places.
-    """
+def _fetch_one_meta(t: str) -> tuple[str, dict]:
+    result: dict = {"name": "", "beta": None, "earnings": None}
     try:
         ticker_obj = yf.Ticker(t)
-        # history() appelle /v8/finance/chart/ et peuple history_metadata
-        ticker_obj.history(period="2d", interval="1d")
-        meta = getattr(ticker_obj, "history_metadata", None) or {}
-        name = meta.get("shortName") or meta.get("longName") or ""
-        if name:
-            return t, str(name).strip()
+        # Nom via endpoint chart (fiable pour toutes places)
+        try:
+            ticker_obj.history(period="2d", interval="1d")
+            meta = getattr(ticker_obj, "history_metadata", None) or {}
+            result["name"] = (meta.get("shortName") or meta.get("longName") or "").strip()
+        except Exception:
+            pass
+        # Beta + Earnings via .info
+        try:
+            info = ticker_obj.info or {}
+            if not result["name"]:
+                result["name"] = (info.get("shortName") or info.get("longName") or "").strip()
+            beta = info.get("beta")
+            if beta is not None:
+                result["beta"] = float(beta)
+            ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
+            if ts and isinstance(ts, (int, float)) and ts > 0:
+                d = datetime.utcfromtimestamp(ts).date()
+                if d >= date.today():
+                    result["earnings"] = d
+        except Exception:
+            pass
     except Exception:
         pass
-    return t, ""
+    return t, result
 
 
-@st.cache_data(ttl=NAMES_TTL, show_spinner=False)
-def fetch_missing_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
-    """
-    Récupère les noms en parallèle via l'endpoint chart Yahoo Finance.
-    Résultats mis en cache 24h.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    names: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        future_to_t = {executor.submit(_get_name_for_ticker, t): t for t in yf_tickers}
-        for future in as_completed(future_to_t, timeout=120):
+@st.cache_data(ttl=META_TTL, show_spinner=False)
+def fetch_ticker_metadata(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+    metadata: dict[str, dict] = {}
+    empty = {"name": "", "beta": None, "earnings": None}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_fetch_one_meta, t): t for t in yf_tickers}
+        for future in as_completed(futures, timeout=180):
             try:
-                ticker, name = future.result(timeout=15)
-                names[ticker] = name
+                t, data = future.result(timeout=15)
+                metadata[t] = data
             except Exception:
-                names[future_to_t[future]] = ""
-    return names
+                metadata[futures[future]] = dict(empty)
+    return metadata
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cours Yahoo Finance
@@ -247,16 +242,14 @@ def _closes(data, ticker, multi):
 
 
 def _price_chg(closes):
-    if closes.empty:
-        return None, None
+    if closes.empty: return None, None
     price = float(closes.iloc[-1])
     dates = pd.to_datetime(closes.index).tz_localize(None).normalize()
     prev  = closes[dates < dates[-1]]
     chg   = None
     if not prev.empty:
         p0 = float(prev.iloc[-1])
-        if p0:
-            chg = (price - p0) / p0 * 100
+        if p0: chg = (price - p0) / p0 * 100
     return price, chg
 
 
@@ -266,18 +259,12 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     for batch in _chunked(list(yf_tickers), BATCH_SIZE):
         try:
             data = yf.download(
-                tickers=" ".join(batch),
-                period=DOWNLOAD_PERIOD,
-                interval=DOWNLOAD_INTERVAL,
-                auto_adjust=False,
-                progress=False,
-                group_by="ticker",
-                threads=True,
-                prepost=False,
+                tickers=" ".join(batch), period=DOWNLOAD_PERIOD,
+                interval=DOWNLOAD_INTERVAL, auto_adjust=False,
+                progress=False, group_by="ticker", threads=True, prepost=False,
             )
         except Exception:
-            for t in batch:
-                results[t] = {"price": None, "chg": None}
+            for t in batch: results[t] = {"price": None, "chg": None}
             continue
         multi = len(batch) > 1
         for t in batch:
@@ -291,8 +278,7 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
 
 def compute_statut(price, buy, fair, trim, exit_) -> str:
     if any(v is None or (isinstance(v, float) and pd.isna(v))
-           for v in [price, buy, fair, trim, exit_]):
-        return ""
+           for v in [price, buy, fair, trim, exit_]): return ""
     p, b, f, k, e = float(price), float(buy), float(fair), float(trim), float(exit_)
     if p <= b: return "Strong buy"
     if p <= f: return "Buy"
@@ -304,38 +290,43 @@ def compute_statut(price, buy, fair, trim, exit_) -> str:
 def compute_ratio(price, buy, exit_) -> float | None:
     try:
         p, b, e = float(price), float(buy), float(exit_)
-        if e <= b:
-            return None
+        if e <= b: return None
         return max(0.0, min(1.0, (e - p) / (e - b)))
-    except Exception:
-        return None
+    except Exception: return None
 
 
 def compute_score(ratio, note) -> float | None:
-    try:
-        return (0.6 * float(ratio) + 0.4 * float(note) / 100) * 100
-    except Exception:
-        return None
+    try: return (0.6 * float(ratio) + 0.4 * float(note) / 100) * 100
+    except Exception: return None
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Formatage
+# Formatage HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fmt_price(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):,.2f}"
 
 def fmt_note(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(int(float(v)))
 
 def fmt_score(v) -> str:
-    """Score arrondi à l'entier le plus proche."""
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(round(float(v)))
+
+def fmt_beta(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{float(v):.2f}"
+
+def fmt_earnings(d: date | None) -> str:
+    if d is None: return "—"
+    today = date.today()
+    if d < today: return "—"
+    s = d.strftime("%d-%m-%Y")
+    if (d - today).days <= 7:
+        return f'<span style="color:#ef4444;font-weight:700">{s}</span>'
+    return s
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
@@ -344,67 +335,46 @@ def html_var(chg) -> str:
     a = "▲" if chg >= 0 else "▼"
     return f'<span style="color:{c}">{a}&nbsp;{abs(chg):.2f}%</span>'
 
-def html_bar(ratio, statut) -> str:
-    if ratio is None:
-        return ""
-    color = STATUT_COLOR.get(statut, "#64748b")
-    pct   = ratio * 100
-    return (
-        '<div style="width:72px;height:9px;background:#1e293b;border-radius:5px;'
-        'overflow:hidden;display:inline-block">'
-        f'<div style="width:{pct:.1f}%;height:100%;background:{color};'
-        'border-radius:5px"></div></div>'
-    )
-
 def html_statut(statut) -> str:
     c = STATUT_COLOR.get(statut, "#64748b")
     return f'<span style="color:{c};font-weight:600">{statut or "—"}</span>'
 
 def html_link(url) -> str:
-    if not url or (isinstance(url, float) and pd.isna(url)):
-        return ""
+    if not url or (isinstance(url, float) and pd.isna(url)): return ""
     u = str(url).strip()
-    if not u.startswith("http"):
-        return ""
-    return (
-        f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
-        'style="color:#7dd3fc;font-size:1.1rem;text-decoration:none">🔗</a>'
-    )
+    if not u.startswith("http"): return ""
+    return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
+            'style="color:#7dd3fc;font-size:1.1rem;text-decoration:none">🔗</a>')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_rows(df_sub: pd.DataFrame, prices: dict, names_fb: dict) -> list[dict]:
+def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
-        yf_t = r.get("yf_ticker")
-        q    = prices.get(str(yf_t), {}) if pd.notna(yf_t) else {}
+        yf_t   = r.get("yf_ticker")
+        q      = prices.get(str(yf_t), {}) if pd.notna(yf_t) else {}
+        meta   = metadata.get(str(yf_t), {}) if pd.notna(yf_t) else {}
 
-        # Prix : Yahoo d'abord, sinon Spot du sheet
-        price = q.get("price")
-        chg   = q.get("chg")
-        if price is None:
-            price = r.get("spot_sheet")
+        price  = q.get("price") or r.get("spot_sheet")
+        chg    = q.get("chg")
 
-        # Nom : sheet → yfinance → gf_ticker
-        name = r.get("name", "")
-        if not name and pd.notna(yf_t):
-            name = names_fb.get(str(yf_t), "")
-        if not name:
-            name = ""   # affichera le gf_ticker en italique gris
+        # Nom : sheet → Yahoo metadata
+        name = r.get("name", "") or meta.get("name", "")
+        name_upper = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
         statut = compute_statut(price, buy, fair, trim, exit_)
         ratio  = compute_ratio(price, buy, exit_)
-        score  = compute_score(ratio, r.get("note"))
+        score  = compute_score(ratio, r.get("note")) or r.get("score_sheet")
 
-        # Fallback : score calculé par le sheet si on ne peut pas le calculer
-        if score is None:
-            score = r.get("score_sheet")
+        beta     = meta.get("beta")
+        earnings = meta.get("earnings")
 
         gf = str(r["gf_ticker"])
-        name_html = name if name else f'<span style="color:#475569;font-style:italic">{gf}</span>'
+        name_html = (name_upper if name_upper
+                     else f'<span style="color:#475569;font-style:italic">{gf}</span>')
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
@@ -414,51 +384,41 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, names_fb: dict) -> list[dict]
             "_ticker":       gf,
             "_name":         name,
             "_statut":       statut,
-            # Colonnes affichées
-            "Ticker":    f'<code style="color:#93c5fd;font-size:.8rem">{gf}</code>',
-            "Société":   name_html,
-            "Prix":      fmt_price(price),
-            "Var %":     html_var(chg),
-            "Barre":     html_bar(ratio, statut),
-            "Score":     fmt_score(score),      # ← Score en premier
-            "Buy":       fmt_price(buy),
-            "Fair":      fmt_price(fair),
-            "Trim":      fmt_price(trim),
-            "Exit":      fmt_price(exit_),
-            "Qualité":   fmt_note(r.get("note")),  # ← Qualité après les prix
-            "Statut":    html_statut(statut),
-            "🔗":        html_link(r.get("url")),
+            "Ticker":        f'<span style="color:#93c5fd;font-size:.8rem;font-family:monospace">{gf}</span>',
+            "Société":       f'<span title="{name_upper}">{name_html}</span>',
+            "Prix":          fmt_price(price),
+            "Var %":         html_var(chg),
+            "Score":         fmt_score(score),
+            "Buy":           fmt_price(buy),
+            "Fair":          fmt_price(fair),
+            "Trim":          fmt_price(trim),
+            "Exit":          fmt_price(exit_),
+            "Qualité":       fmt_note(r.get("note")),
+            "Beta":          fmt_beta(beta),
+            "Statut":        html_statut(statut),
+            "Earnings":      fmt_earnings(earnings),
+            "🔗":            html_link(r.get("url")),
         })
     return rows
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tableau HTML
+# Tableau HTML avec largeurs fixes identiques entre onglets
 # ══════════════════════════════════════════════════════════════════════════════
-
-DISPLAY_COLS = [
-    "Ticker", "Société", "Prix", "Var %", "Barre",
-    "Score",                              # ← Score avant les prix
-    "Buy", "Fair", "Trim", "Exit",
-    "Qualité",                            # ← Qualité après les prix
-    "Statut", "🔗",
-]
-
-# Colonnes centrées
-CENTER = {"Score", "Qualité", "Barre", "🔗", "Statut", "Prix", "Var %",
-          "Buy", "Fair", "Trim", "Exit"}
 
 CSS = """<style>
 .wl-wrap{overflow-x:auto;max-height:72vh;overflow-y:auto;
   border-radius:8px;border:1px solid #1e293b}
-.wl-table{width:100%;border-collapse:collapse;font-size:.82rem;color:#e2e8f0}
+.wl-table{width:100%;border-collapse:collapse;font-size:.82rem;color:#e2e8f0;
+  table-layout:fixed}
 .wl-table thead tr{position:sticky;top:0;z-index:2}
 .wl-table th{background:#0f172a;color:#94a3b8;font-weight:600;
-  padding:9px 11px;text-align:left;border-bottom:2px solid #334155;
-  white-space:nowrap}
+  padding:9px 8px;text-align:left;border-bottom:2px solid #334155;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wl-table th.c{text-align:center}
-.wl-table td{padding:6px 11px;border-bottom:1px solid #1a2035;
-  vertical-align:middle;white-space:nowrap}
+.wl-table td{padding:6px 8px;border-bottom:1px solid #1a2035;
+  vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wl-table td.c{text-align:center}
+.wl-table td.soc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wl-table tbody tr:hover td{background:#ffffff08}
 </style>"""
 
@@ -467,21 +427,29 @@ def render_table(rows: list[dict]) -> None:
     if not rows:
         st.info("Aucun titre.")
         return
-    th  = "".join(
-        f'<th class="{"c" if c in CENTER else ""}">{c}</th>'
+
+    colgroup = "<colgroup>" + "".join(
+        f'<col style="width:{COL_WIDTHS.get(c, "auto")}">'
+        for c in DISPLAY_COLS
+    ) + "</colgroup>"
+
+    th = "".join(
+        f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>'
         for c in DISPLAY_COLS
     )
     trs = []
     for r in rows:
         tds = "".join(
-            f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
+            f'<td class="{"c" if c in CENTER else ("soc" if c == "Société" else "")}">'
+            f'{r[c]}</td>'
             for c in DISPLAY_COLS
         )
         trs.append(f"<tr>{tds}</tr>")
+
     st.markdown(
         CSS
         + f'<div class="wl-wrap"><table class="wl-table">'
-        f'<thead><tr>{th}</tr></thead>'
+        f'{colgroup}<thead><tr>{th}</tr></thead>'
         f'<tbody>{"".join(trs)}</tbody></table></div>',
         unsafe_allow_html=True,
     )
@@ -490,15 +458,12 @@ def render_table(rows: list[dict]) -> None:
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(df_sub: pd.DataFrame, prices: dict, names_fb: dict, key: str) -> None:
-    rows = build_rows(df_sub, prices, names_fb)
+def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> None:
+    rows = build_rows(df_sub, prices, metadata)
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
-        search = st.text_input(
-            "Recherche", key=f"{key}_s",
-            placeholder="Ticker ou société…",
-        )
+        search = st.text_input("Recherche", key=f"{key}_s", placeholder="Ticker ou société…")
     with c2:
         sort_choice = st.selectbox(
             "Tri",
@@ -539,8 +504,6 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names_fb: dict, key: str) -> 
 # APP PRINCIPALE
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title("Watchlist")   # ← pas d'emoji dans le titre
-
 with st.spinner("Chargement de la liste de titres…"):
     try:
         tickers_df, data_source = load_tickers()
@@ -552,39 +515,28 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
-# Métriques
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Total", len(tickers_df))
-m2.metric("Portefeuille", len(pf_df))
-m3.metric("Watchlist", len(wl_df))
-m4.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
+# Métriques (sans Total, sans titre)
+m1, m2, m3 = st.columns(3)
+m1.metric("Portefeuille", len(pf_df))
+m2.metric("Watchlist", len(wl_df))
+m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 
-# Bouton Actualiser — vide les 3 caches
+# Bouton Actualiser
 rc1, rc2 = st.columns([1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_prices.clear()
         load_tickers.clear()
-        fetch_missing_names.clear()
+        fetch_ticker_metadata.clear()
         st.rerun()
 with rc2:
-    n_batches = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-    st.caption(
-        f"Source : **{data_source}** · {len(valid_yf)} tickers · "
-        f"{n_batches} paquets Yahoo · cache {REFRESH_TTL // 60} min"
-    )
+    from math import ceil
+    n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+    st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · {n} paquets Yahoo · cache {REFRESH_TTL//60} min")
 
-# Noms manquants (uniquement pour les tickers sans nom dans le sheet)
-no_name_yf = tuple(
-    str(r["yf_ticker"])
-    for _, r in tickers_df.iterrows()
-    if not r["name"] and pd.notna(r.get("yf_ticker"))
-)
-if no_name_yf:
-    with st.spinner(f"Récupération de {len(no_name_yf)} noms manquants…"):
-        names_fb = fetch_missing_names(no_name_yf)
-else:
-    names_fb = {}
+# Métadonnées (nom, beta, earnings) — cache 24h
+with st.spinner(f"Chargement des métadonnées ({len(valid_yf)} titres)…"):
+    metadata = fetch_ticker_metadata(valid_yf)
 
 # Cours Yahoo
 with st.spinner(f"Récupération de {len(valid_yf)} cours…"):
@@ -593,15 +545,14 @@ with st.spinner(f"Récupération de {len(valid_yf)} cours…"):
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
-ko = len(valid_yf) - ok
 s1, s2, _ = st.columns(3)
-s1.metric("Prix Yahoo récupérés", ok)
-s2.metric("Fallback Google / manquants", ko)
+s1.metric("Prix récupérés", ok)
+s2.metric("Manquants", len(valid_yf) - ok)
 
 st.divider()
 
 tab1, tab2 = st.tabs([f"Portefeuille ({len(pf_df)})", f"Watchlist ({len(wl_df)})"])
 with tab1:
-    render_tab(pf_df, prices, names_fb, key="pf")
+    render_tab(pf_df, prices, metadata, key="pf")
 with tab2:
-    render_tab(wl_df, prices, names_fb, key="wl")
+    render_tab(wl_df, prices, metadata, key="wl")
