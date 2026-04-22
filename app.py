@@ -208,26 +208,51 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
             beta = info.get("beta")
             if beta is not None:
                 result["beta"] = float(beta)
-            # Prochains earnings
-            ts = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
-            if ts and isinstance(ts, (int, float)) and ts > 0:
+
+            today = date.today()
+
+            # earningsTimestamp = date la plus pertinente publiée par Yahoo
+            # Si passée → derniers résultats publiés (→ MAJ)
+            # Si future → prochains résultats attendus (→ colonne Earnings)
+            for field in ("earningsTimestamp", "earningsTimestampStart"):
+                ts = info.get(field)
+                if not ts or not isinstance(ts, (int, float)) or ts <= 0:
+                    continue
                 d = datetime.utcfromtimestamp(ts).date()
-                if d >= date.today():
-                    result["earnings"] = d
+                if d >= today:
+                    if result["earnings"] is None:
+                        result["earnings"] = d
+                else:
+                    if result["last_earnings"] is None or d > result["last_earnings"]:
+                        result["last_earnings"] = d
         except Exception:
-            pass
-        # Derniers earnings passés (via earnings_dates)
-        try:
-            ed = ticker_obj.earnings_dates
-            if ed is not None and not ed.empty and "Reported EPS" in ed.columns:
-                past = ed[ed["Reported EPS"].notna()]
-                if not past.empty:
-                    last_ts = past.index[0]
-                    # L'index peut être tz-aware
-                    if hasattr(last_ts, "date"):
-                        result["last_earnings"] = last_ts.date()
-        except Exception:
-            pass
+            info = {}
+
+        # Compléter last_earnings via earnings_dates si toujours manquant
+        if result["last_earnings"] is None:
+            try:
+                ed = ticker_obj.earnings_dates
+                if ed is not None and not ed.empty:
+                    rep_col = next(
+                        (c for c in ed.columns if "reported" in c.lower()), None
+                    )
+                    past = ed[ed[rep_col].notna()] if rep_col else ed
+                    if not past.empty:
+                        last_ts = past.index[0]
+                        d = (last_ts.date() if hasattr(last_ts, "date")
+                             else last_ts.to_pydatetime().date())
+                        result["last_earnings"] = d
+            except Exception:
+                pass
+
+        # Dernier fallback : mostRecentQuarter (fin de trimestre)
+        if result["last_earnings"] is None:
+            try:
+                mrq = (info or {}).get("mostRecentQuarter")
+                if mrq and isinstance(mrq, (int, float)) and mrq > 0:
+                    result["last_earnings"] = datetime.utcfromtimestamp(mrq).date()
+            except Exception:
+                pass
     except Exception:
         pass
     return t, result
