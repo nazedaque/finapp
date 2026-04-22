@@ -211,20 +211,18 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
 
             today = date.today()
 
-            # earningsTimestamp = date la plus pertinente publiée par Yahoo
-            # Si passée → derniers résultats publiés (→ MAJ)
-            # Si future → prochains résultats attendus (→ colonne Earnings)
+            # earningsTimestamp → on stocke TOUJOURS la date pour l'affichage
+            # (passée ou future). Si passée, elle sert aussi pour MAJ.
             for field in ("earningsTimestamp", "earningsTimestampStart"):
                 ts = info.get(field)
                 if not ts or not isinstance(ts, (int, float)) or ts <= 0:
                     continue
                 d = datetime.utcfromtimestamp(ts).date()
-                if d >= today:
-                    if result["earnings"] is None:
-                        result["earnings"] = d
-                else:
-                    if result["last_earnings"] is None or d > result["last_earnings"]:
-                        result["last_earnings"] = d
+                if result["earnings"] is None:
+                    result["earnings"] = d          # toujours affiché
+                if d < today and (result["last_earnings"] is None
+                                  or d > result["last_earnings"]):
+                    result["last_earnings"] = d     # comparaison MAJ
         except Exception:
             info = {}
 
@@ -370,10 +368,9 @@ def fmt_beta(v) -> str:
 
 def fmt_earnings(d: date | None) -> str:
     if d is None: return "—"
-    today = date.today()
-    if d < today: return "—"
     s = d.strftime("%d-%m-%Y")
-    if (d - today).days <= 7:
+    today = date.today()
+    if d >= today and (d - today).days <= 7:
         return f'<span style="color:#ef4444;font-weight:700">{s}</span>'
     return s
 
@@ -441,6 +438,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]
             "_ticker":       gf,
             "_name":         name,
             "_statut":       statut,
+            "_earnings":     earnings,
             "MAJ":           maj_html,
             "Ticker":        f'<span style="color:#93c5fd;font-size:.8rem;font-family:monospace">{gf}</span>',
             "Société":       f'<span title="{name_upper}">{name_html}</span>',
@@ -525,7 +523,8 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> 
     with c2:
         sort_choice = st.selectbox(
             "Tri",
-            ["Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓", "Var % ↑", "Var % ↓"],
+            ["Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
+             "Var % ↑", "Var % ↓", "Earnings ↓"],
             key=f"{key}_t",
         )
     with c3:
@@ -550,6 +549,11 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> 
         rows.sort(key=lambda r: (r["_chg"] is None, -(r["_chg"] or 0)))
     elif sort_choice == "Var % ↓":
         rows.sort(key=lambda r: (r["_chg"] is None, r["_chg"] or 0))
+    elif sort_choice == "Earnings ↓":
+        # Plus récent en premier, sans date en dernier
+        rows.sort(key=lambda r: (r["_earnings"] is None, r["_earnings"] or date.min),
+                  reverse=False)
+        rows.sort(key=lambda r: r["_earnings"] is None)  # None toujours en dernier
 
     render_table(rows)
 
