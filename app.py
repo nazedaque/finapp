@@ -402,13 +402,9 @@ def fmt_earnings(d) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):.2f}"
 
-def fmt_earnings(d: date | None) -> str:
-    if d is None: return "—"
-    s = d.strftime("%d-%m-%Y")
-    today = date.today()
-    if d >= today and (d - today).days <= 7:
-        return f'<span style="color:#ef4444;font-weight:700">{s}</span>'
-    return s
+def fmt_beta(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{float(v):.2f}"
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
