@@ -211,18 +211,33 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
 
             today = date.today()
 
-            # earningsTimestamp → on stocke TOUJOURS la date pour l'affichage
-            # (passée ou future). Si passée, elle sert aussi pour MAJ.
-            for field in ("earningsTimestamp", "earningsTimestampStart"):
+            # Yahoo stocke la date selon le ticker dans des champs différents.
+            # On collecte tous les timestamps disponibles et on prend le plus pertinent.
+            candidates: list[date] = []
+
+            # 1) Champs scalaires
+            for field in ("earningsTimestamp", "earningsTimestampStart",
+                          "earningsTimestampEnd"):
                 ts = info.get(field)
-                if not ts or not isinstance(ts, (int, float)) or ts <= 0:
-                    continue
-                d = datetime.utcfromtimestamp(ts).date()
-                if result["earnings"] is None:
-                    result["earnings"] = d          # toujours affiché
-                if d < today and (result["last_earnings"] is None
-                                  or d > result["last_earnings"]):
-                    result["last_earnings"] = d     # comparaison MAJ
+                if ts and isinstance(ts, (int, float)) and ts > 0:
+                    candidates.append(datetime.utcfromtimestamp(ts).date())
+
+            # 2) earningsDate : souvent une liste [ts_debut, ts_fin]
+            raw = info.get("earningsDate")
+            if raw:
+                items = raw if isinstance(raw, list) else [raw]
+                for ts in items:
+                    if ts and isinstance(ts, (int, float)) and ts > 0:
+                        candidates.append(datetime.utcfromtimestamp(ts).date())
+
+            if candidates:
+                # Préférer la date la plus récente (passée ou future)
+                best = max(candidates)
+                result["earnings"] = best
+                # Pour MAJ : on veut la date passée la plus récente
+                past = [d for d in candidates if d < today]
+                if past:
+                    result["last_earnings"] = max(past)
         except Exception:
             info = {}
 
@@ -524,7 +539,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> 
         sort_choice = st.selectbox(
             "Tri",
             ["Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-             "Var % ↑", "Var % ↓", "Earnings ↓"],
+             "Var % ↑", "Var % ↓"],
             key=f"{key}_t",
         )
     with c3:
@@ -549,11 +564,6 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> 
         rows.sort(key=lambda r: (r["_chg"] is None, -(r["_chg"] or 0)))
     elif sort_choice == "Var % ↓":
         rows.sort(key=lambda r: (r["_chg"] is None, r["_chg"] or 0))
-    elif sort_choice == "Earnings ↓":
-        # Plus récent en premier, sans date en dernier
-        rows.sort(key=lambda r: (r["_earnings"] is None, r["_earnings"] or date.min),
-                  reverse=False)
-        rows.sort(key=lambda r: r["_earnings"] is None)  # None toujours en dernier
 
     render_table(rows)
 
