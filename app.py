@@ -189,103 +189,120 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # Métadonnées Yahoo : nom, beta, earnings (en parallèle, cache 24h)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_one_meta(t: str) -> tuple[str, dict]:
-    result: dict = {"name": "", "beta": None, "earnings": None, "last_earnings": None}
+def _ts_to_date(ts) -> date | None:
+    try:
+        if ts and isinstance(ts, (int, float)) and ts > 0:
+            return datetime.utcfromtimestamp(ts).date()
+    except Exception:
+        pass
+    return None
+
+
+# ── Noms : via history_metadata, même endpoint que les cours ─────────────────
+
+def _fetch_name(t: str) -> tuple[str, str]:
+    try:
+        ticker_obj = yf.Ticker(t)
+        ticker_obj.history(period="2d", interval="1d")
+        meta = getattr(ticker_obj, "history_metadata", None) or {}
+        name = (meta.get("shortName") or meta.get("longName") or "").strip()
+        return t, name
+    except Exception:
+        return t, ""
+
+
+@st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
+def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
+    """Noms via history_metadata — rapide, même TTL que les cours."""
+    names: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(_fetch_name, t): t for t in yf_tickers}
+        for future in as_completed(futures, timeout=120):
+            try:
+                t, name = future.result(timeout=15)
+                names[t] = name
+            except Exception:
+                names[futures[future]] = ""
+    return names
+
+
+# ── Beta + Earnings : via .info, lent, à déclencher manuellement ─────────────
+
+def _fetch_one_beta_earnings(t: str) -> tuple[str, dict]:
+    result: dict = {"beta": None, "earnings": None, "last_earnings": None}
     try:
         ticker_obj = yf.Ticker(t)
 
-        # ── Nom via endpoint chart ─────────────────────────────────────────
-        try:
-            ticker_obj.history(period="2d", interval="1d")
-            meta = getattr(ticker_obj, "history_metadata", None) or {}
-            result["name"] = (meta.get("shortName") or meta.get("longName") or "").strip()
-        except Exception:
-            pass
-
-        # ── Info : nom (fallback), beta ────────────────────────────────────
+        # .info avec retry sur 429 uniquement
         info: dict = {}
-        try:
-            info = ticker_obj.info or {}
-            if not result["name"]:
-                result["name"] = (info.get("shortName") or info.get("longName") or "").strip()
-            beta = info.get("beta")
-            if beta is not None:
-                result["beta"] = float(beta)
-        except Exception:
-            pass
+        for attempt in range(3):
+            try:
+                info = ticker_obj.info or {}
+                break
+            except Exception as e:
+                if attempt < 2 and ("429" in str(e) or "Too Many" in str(e)):
+                    import time
+                    time.sleep(2 ** attempt + 1)
+                else:
+                    break
 
-        # ── Collecte de toutes les dates candidates ────────────────────────
+        beta = info.get("beta")
+        if beta is not None:
+            try:
+                result["beta"] = float(beta)
+            except Exception:
+                pass
+
+        # Collecte de toutes les dates candidates
         today = date.today()
         all_dates: list[date] = []
 
-        # Source 1 : champs scalaires de .info
-        for field in ("earningsTimestamp", "earningsTimestampStart",
-                      "earningsTimestampEnd"):
-            ts = info.get(field)
-            if ts and isinstance(ts, (int, float)) and ts > 0:
-                try:
-                    all_dates.append(datetime.utcfromtimestamp(ts).date())
-                except Exception:
-                    pass
+        for field in ("earningsTimestamp", "earningsTimestampStart", "earningsTimestampEnd"):
+            d = _ts_to_date(info.get(field))
+            if d: all_dates.append(d)
 
-        # Source 2 : earningsDate (liste ou scalaire)
         raw = info.get("earningsDate")
-        if raw:
-            for ts in (raw if isinstance(raw, list) else [raw]):
-                if ts and isinstance(ts, (int, float)) and ts > 0:
-                    try:
-                        all_dates.append(datetime.utcfromtimestamp(ts).date())
-                    except Exception:
-                        pass
+        for ts in (raw if isinstance(raw, list) else [raw] if raw else []):
+            d = _ts_to_date(ts)
+            if d: all_dates.append(d)
 
-        # Source 3 : calendarEvents (souvent renseigné pour les actions EU)
         try:
             cal = info.get("calendarEvents") or {}
             earn_cal = cal.get("earnings") or {}
             raw_cal = earn_cal.get("earningsDate") or []
-            for ts in (raw_cal if isinstance(raw_cal, list) else [raw_cal]):
-                if ts and isinstance(ts, (int, float)) and ts > 0:
-                    try:
-                        all_dates.append(datetime.utcfromtimestamp(ts).date())
-                    except Exception:
-                        pass
+            for ts in (raw_cal if isinstance(raw_cal, list) else [raw_cal] if raw_cal else []):
+                d = _ts_to_date(ts)
+                if d: all_dates.append(d)
         except Exception:
             pass
 
-        # Source 4 : earnings_dates DataFrame (la plus complète)
-        try:
-            ed = ticker_obj.earnings_dates
-            if ed is not None and not ed.empty:
-                for idx in ed.index:
-                    try:
-                        d = idx.date() if hasattr(idx, "date") else idx.to_pydatetime().date()
-                        all_dates.append(d)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # earnings_dates DataFrame — le plus complet
+        for attempt in range(2):
+            try:
+                ed = ticker_obj.earnings_dates
+                if ed is not None and not ed.empty:
+                    for idx in ed.index:
+                        try:
+                            d = idx.date() if hasattr(idx, "date") else idx.to_pydatetime().date()
+                            all_dates.append(d)
+                        except Exception:
+                            pass
+                break
+            except Exception as e:
+                if attempt < 1 and ("429" in str(e) or "Too Many" in str(e)):
+                    import time
+                    time.sleep(3)
 
-        # Source 5 : mostRecentQuarter (dernier recours pour MAJ)
-        mrq_date: date | None = None
-        try:
-            mrq = info.get("mostRecentQuarter")
-            if mrq and isinstance(mrq, (int, float)) and mrq > 0:
-                mrq_date = datetime.utcfromtimestamp(mrq).date()
-        except Exception:
-            pass
-
-        # ── Sélection ─────────────────────────────────────────────────────
         if all_dates:
-            # Affichage Earnings : date la plus récente toutes catégories
             result["earnings"] = max(all_dates)
-            # MAJ : date passée la plus récente
             past = [d for d in all_dates if d < today]
             if past:
                 result["last_earnings"] = max(past)
 
-        # Fallback MAJ : mostRecentQuarter
-        if result["last_earnings"] is None and mrq_date and mrq_date < today:
-            result["last_earnings"] = mrq_date
+        if result["last_earnings"] is None:
+            d = _ts_to_date(info.get("mostRecentQuarter"))
+            if d and d < today:
+                result["last_earnings"] = d
 
     except Exception:
         pass
@@ -293,18 +310,21 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
 
 
 @st.cache_data(ttl=META_TTL, show_spinner=False)
-def fetch_ticker_metadata(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    metadata: dict[str, dict] = {}
-    empty = {"name": "", "beta": None, "earnings": None}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_fetch_one_meta, t): t for t in yf_tickers}
-        for future in as_completed(futures, timeout=180):
+def fetch_beta_earnings(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+    """Beta + Earnings — lent (rate-limit Yahoo), à déclencher manuellement."""
+    results: dict[str, dict] = {}
+    empty = {"beta": None, "earnings": None, "last_earnings": None}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_fetch_one_beta_earnings, t): t for t in yf_tickers}
+        for future in as_completed(futures, timeout=300):
             try:
-                t, data = future.result(timeout=15)
-                metadata[t] = data
+                t, data = future.result(timeout=30)
+                results[t] = data
             except Exception:
-                metadata[futures[future]] = dict(empty)
-    return metadata
+                results[futures[future]] = dict(empty)
+    return results
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cours Yahoo Finance
@@ -432,18 +452,20 @@ def html_link(url) -> str:
 # Construction des lignes
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]:
+def build_rows(df_sub: pd.DataFrame, prices: dict,
+               names: dict[str, str], be: dict[str, dict]) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
-        yf_t   = r.get("yf_ticker")
-        q      = prices.get(str(yf_t), {}) if pd.notna(yf_t) else {}
-        meta   = metadata.get(str(yf_t), {}) if pd.notna(yf_t) else {}
+        yf_t = r.get("yf_ticker")
+        yf_s = str(yf_t) if pd.notna(yf_t) else ""
+        q    = prices.get(yf_s, {})
+        be_d = be.get(yf_s, {})
 
-        price  = q.get("price") or r.get("spot_sheet")
-        chg    = q.get("chg")
+        price = q.get("price") or r.get("spot_sheet")
+        chg   = q.get("chg")
 
-        # Nom : sheet → Yahoo metadata
-        name = r.get("name", "") or meta.get("name", "")
+        # Nom : sheet → fetch_names → italique gf_ticker
+        name = r.get("name", "") or names.get(yf_s, "")
         name_upper = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
@@ -451,12 +473,12 @@ def build_rows(df_sub: pd.DataFrame, prices: dict, metadata: dict) -> list[dict]
         ratio  = compute_ratio(price, buy, exit_)
         score  = compute_score(ratio, r.get("note")) or r.get("score_sheet")
 
-        beta     = meta.get("beta")
-        earnings = meta.get("earnings")
-        last_earnings = meta.get("last_earnings")
+        beta          = be_d.get("beta")
+        earnings      = be_d.get("earnings")
+        last_earnings = be_d.get("last_earnings")
 
-        # Colonne MAJ : comparaison date de mise à jour vs derniers earnings
-        last_update = r.get("last_update")  # date or None
+        # Colonne MAJ
+        last_update = r.get("last_update")
         if last_update and last_earnings:
             maj_html = "✔️" if last_update >= last_earnings else "⚠️"
         else:
@@ -550,8 +572,9 @@ def render_table(rows: list[dict]) -> None:
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict, key: str) -> None:
-    rows = build_rows(df_sub, prices, metadata)
+def render_tab(df_sub: pd.DataFrame, prices: dict,
+               names: dict, be: dict, key: str) -> None:
+    rows = build_rows(df_sub, prices, names, be)
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
@@ -608,44 +631,61 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
-# Métriques (sans Total, sans titre)
+# ── Métriques ─────────────────────────────────────────────────────────────────
 m1, m2, m3 = st.columns(3)
 m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist", len(wl_df))
-m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
+m3.metric("Cours MAJ", st.session_state.get("last_prices_ts", "—"))
 
-# Bouton Actualiser
-rc1, rc2 = st.columns([1, 4])
-with rc1:
+# ── Deux boutons Actualiser ───────────────────────────────────────────────────
+from math import ceil
+b1, b2, info_col = st.columns([1, 1, 3])
+
+with b1:
     if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_prices.clear()
+        fetch_names.clear()
         load_tickers.clear()
-        fetch_ticker_metadata.clear()
         st.rerun()
-with rc2:
-    from math import ceil
+
+with b2:
+    if st.button("Beta & Earnings", use_container_width=True):
+        fetch_beta_earnings.clear()
+        st.rerun()
+
+with info_col:
     n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-    st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · {n} paquets Yahoo · cache {REFRESH_TTL//60} min")
+    be_ts = st.session_state.get("last_be_ts", "jamais")
+    st.caption(
+        f"Source : **{data_source}** · {len(valid_yf)} tickers · "
+        f"{n} paquets Yahoo · "
+        f"Beta & Earnings : {be_ts}"
+    )
 
-# Métadonnées (nom, beta, earnings) — cache 24h
-with st.spinner(f"Chargement des métadonnées ({len(valid_yf)} titres)…"):
-    metadata = fetch_ticker_metadata(valid_yf)
-
-# Cours Yahoo
+# ── Cours + Noms ──────────────────────────────────────────────────────────────
 with st.spinner(f"Récupération de {len(valid_yf)} cours…"):
     prices = fetch_prices(valid_yf)
 
-st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+with st.spinner(f"Récupération des noms ({len(valid_yf)} titres)…"):
+    names = fetch_names(valid_yf)
+
+st.session_state["last_prices_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
 s1, s2, _ = st.columns(3)
 s1.metric("Prix récupérés", ok)
 s2.metric("Manquants", len(valid_yf) - ok)
 
+# ── Beta & Earnings (cache 24h, rechargé manuellement) ───────────────────────
+be_data = fetch_beta_earnings(valid_yf)
+if not st.session_state.get("last_be_ts") or \
+        st.session_state.get("last_be_ts") == "jamais":
+    st.session_state["last_be_ts"] = datetime.now(timezone.utc).strftime("%d/%m %H:%M UTC")
+
 st.divider()
 
 tab1, tab2 = st.tabs([f"Portefeuille ({len(pf_df)})", f"Watchlist ({len(wl_df)})"])
 with tab1:
-    render_tab(pf_df, prices, metadata, key="pf")
+    render_tab(pf_df, prices, names, be_data, key="pf")
 with tab2:
-    render_tab(wl_df, prices, metadata, key="wl")
+    render_tab(wl_df, prices, names, be_data, key="wl")
