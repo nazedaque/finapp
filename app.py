@@ -507,7 +507,8 @@ def html_link(url) -> str:
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
                names: dict, be_data: dict, sparklines: dict,
-               highlight_radar: bool = False) -> list[dict]:
+               highlight_radar: bool = False,
+               flags: set[str] | None = None) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
         yf_t   = r.get("yf_ticker")
@@ -535,9 +536,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else f'<span style="color:#475569;font-style:italic">{gf}</span>'
 
-        # Mise en surbrillance "sous le radar" (watchlist, statut achat, score élevé)
-        radar = (highlight_radar
-                 and score is not None and float(score) >= 85)
+        # Mise en surbrillance "sous le radar"
+        radar   = (highlight_radar and score is not None and float(score) >= 85)
+        flagged = (gf in (flags or set()))
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
@@ -551,6 +552,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_name":         name,
             "_statut":       statut,
             "_radar":        radar,
+            "_flagged":      flagged,
             # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
@@ -564,7 +566,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Earnings": earnings.strftime("%d-%m-%Y") if earnings else "",
             },
             # HTML
-            "MAJ":      fmt_maj(r.get("last_update"), earnings),
+            "MAJ":      fmt_maj(r.get("last_update"), earnings) + (
+                        ' <span class="wl-flag-icon">⚑</span>' if flagged else ""),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Prix":     fmt_price(price),
@@ -625,6 +628,9 @@ CSS = """<style>
 .wl-table tbody tr:hover td{background:#ffffff0a}
 .wl-radar td{background:#0f2920 !important}
 .wl-radar:hover td{background:#1a3d2b !important}
+.wl-flagged td{background:#1e1535 !important}
+.wl-flagged:hover td{background:#2a1d4a !important}
+.wl-flag-icon{font-size:.75rem;color:#a78bfa}
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -638,7 +644,12 @@ def render_table(rows: list[dict]) -> None:
     )
     trs = []
     for r in rows:
-        cls = ' class="wl-radar"' if r["_radar"] else ""
+        if r["_flagged"]:
+            cls = ' class="wl-flagged"'
+        elif r["_radar"]:
+            cls = ' class="wl-radar"'
+        else:
+            cls = ""
         tds = "".join(
             f'<td class="{"c" if c in CENTER else ("" if c != "Société" else "")}">'
             f'{r[c]}</td>' for c in DISPLAY_COLS
@@ -658,8 +669,10 @@ def render_table(rows: list[dict]) -> None:
 def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
                be_data: dict, sparklines: dict, key: str,
                highlight_radar: bool = False,
-               global_search: str = "") -> None:
-    rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
+               global_search: str = "",
+               flags: set[str] | None = None) -> None:
+    rows = build_rows(df_sub, prices, names, be_data, sparklines,
+                      highlight_radar, flags)
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -691,6 +704,36 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
     key_fn = sort_map.get(sort_choice)
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
+
+    # Gestion des flags (persistants)
+    all_tickers = [r["_ticker"] for r in rows]
+    flagged_in_tab = sorted((flags or set()) & set(all_tickers))
+    with st.expander(f"⚑ Titres marqués ({len(flagged_in_tab)})", expanded=False):
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            to_add = st.selectbox(
+                "Marquer un titre", [""] + all_tickers,
+                key=f"{key}_flag_add",
+                format_func=lambda x: "— choisir —" if x == "" else x,
+            )
+            if to_add and to_add not in (flags or set()):
+                new_flags = (flags or set()) | {to_add}
+                save_flags(new_flags)
+                st.session_state["flags"] = new_flags
+                st.rerun()
+        with fc2:
+            to_remove = st.selectbox(
+                "Démarquer un titre", [""] + flagged_in_tab,
+                key=f"{key}_flag_rm",
+                format_func=lambda x: "— choisir —" if x == "" else x,
+            )
+            if to_remove:
+                new_flags = (flags or set()) - {to_remove}
+                save_flags(new_flags)
+                st.session_state["flags"] = new_flags
+                st.rerun()
+        if flagged_in_tab:
+            st.caption("Marqués : " + ", ".join(flagged_in_tab))
 
     # Export XLS
     if rows:
@@ -766,9 +809,9 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # APP PRINCIPALE
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# APP PRINCIPALE
-# ══════════════════════════════════════════════════════════════════════════════
+# Chargement des flags persistants
+if "flags" not in st.session_state:
+    st.session_state["flags"] = load_flags()
 
 # ── 1. Sheet en premier ───────────────────────────────────────────────────────
 with st.spinner("Chargement du Google Sheet…"):
@@ -845,7 +888,23 @@ s2.metric("Manquants",      len(valid_yf) - ok)
 st.divider()
 
 # ── Recherche globale (Portefeuille + Watchlist) ───────────────────────────────
-import streamlit.components.v1 as components
+import json, os
+
+FLAGS_FILE = "flagged.json"
+
+def load_flags() -> set[str]:
+    try:
+        with open(FLAGS_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_flags(flags: set[str]) -> None:
+    try:
+        with open(FLAGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(flags), f, ensure_ascii=False)
+    except Exception:
+        pass
 
 # Auto-sélection du texte dans tous les champs texte
 components.html("""
@@ -882,10 +941,11 @@ tab1, tab2, tab3 = st.tabs([
 ])
 with tab1:
     render_tab(pf_df, prices, names, be_data, sparklines, key="pf",
-               global_search=global_search)
+               global_search=global_search, flags=st.session_state["flags"])
 with tab2:
     render_tab(wl_df, prices, names, be_data, sparklines, key="wl",
-               highlight_radar=True, global_search=global_search)
+               highlight_radar=True, global_search=global_search,
+               flags=st.session_state["flags"])
 with tab3:
     render_debug(tickers_df, prices, names)
 
