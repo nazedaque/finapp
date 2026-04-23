@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import json
+import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +12,26 @@ import openpyxl
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Persistance des flags
+# ══════════════════════════════════════════════════════════════════════════════
+
+FLAGS_FILE = "flagged.json"
+
+def load_flags() -> set[str]:
+    try:
+        with open(FLAGS_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_flags(flags: set[str]) -> None:
+    try:
+        with open(FLAGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(flags), f, ensure_ascii=False)
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Config
@@ -888,24 +910,6 @@ s2.metric("Manquants",      len(valid_yf) - ok)
 st.divider()
 
 # ── Recherche globale (Portefeuille + Watchlist) ───────────────────────────────
-import json, os
-
-FLAGS_FILE = "flagged.json"
-
-def load_flags() -> set[str]:
-    try:
-        with open(FLAGS_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except Exception:
-        return set()
-
-def save_flags(flags: set[str]) -> None:
-    try:
-        with open(FLAGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(sorted(flags), f, ensure_ascii=False)
-    except Exception:
-        pass
-
 # Auto-sélection du texte dans tous les champs texte
 components.html("""
 <script>
