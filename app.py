@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 
 import openpyxl
@@ -105,7 +105,6 @@ SHEET_COL_NORMALIZED = {
     "score mixte": "score_sheet",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
-    "yf_ticker":   "yf_ticker",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
 
@@ -115,27 +114,7 @@ def _normalize_col(s: str) -> str:
     s = str(s).replace("\ufeff", "").replace("\u202f", "").replace("\xa0", "")
     nfkd = unicodedata.normalize("NFD", s)
     s = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
-    s = s.replace("_", " ")
     return re.sub(r"\s+", " ", s).strip().lower()
-
-
-def _collect_futures_map(futures: dict, empty_value):
-    results = {}
-    try:
-        for future in as_completed(futures, timeout=60):
-            try:
-                key, data = future.result(timeout=15)
-                results[key] = data
-            except Exception:
-                results[futures[future]] = empty_value() if callable(empty_value) else empty_value
-    except TimeoutError:
-        pass
-
-    for future, ticker in futures.items():
-        if ticker not in results:
-            results[ticker] = empty_value() if callable(empty_value) else empty_value
-        future.cancel()
-    return results
 
 
 def load_tickers() -> tuple[pd.DataFrame, str]:
@@ -257,7 +236,12 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
         batch = tickers[i: i + 10]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_name, t): t for t in batch}
-            names.update(_collect_futures_map(futures, ""))
+            for future in as_completed(futures, timeout=60):
+                try:
+                    t, name = future.result(timeout=15)
+                    names[t] = name
+                except Exception:
+                    names[futures[future]] = ""
         if i + 10 < len(tickers):
             time.sleep(0.2)
     return names
@@ -317,7 +301,12 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         batch = tickers[i: i + 10]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_be, t): t for t in batch}
-            results.update(_collect_futures_map(futures, lambda: dict(empty)))
+            for future in as_completed(futures, timeout=60):
+                try:
+                    t, data = future.result(timeout=15)
+                    results[t] = data
+                except Exception:
+                    results[futures[future]] = dict(empty)
         if i + 10 < len(tickers):
             time.sleep(0.2)
     return results
@@ -735,15 +724,15 @@ def render_table(rows: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(rows: list[dict], key: str) -> None:
-    sf = st.radio(
-        "Statut",
-        ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"],
-        horizontal=True, key=f"{key}_f",
-    )
-    sort_choice = st.selectbox("Tri", [
-        "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-        "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
-    ], key=f"{key}_t")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        sort_choice = st.selectbox("Tri", [
+            "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
+            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
+        ], key=f"{key}_t")
+    with c2:
+        sf = st.selectbox("Statut",
+            ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
 
     if sf != "Tous":
         rows = [r for r in rows if r["_statut"] == sf]
@@ -881,57 +870,10 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
-  border-radius: 14px 0 0 14px;
+  border-radius: 14px;
   padding: 14px 24px;
   margin-bottom: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
-  height: 100%;
-  box-sizing: border-box;
-}
-
-/* Boutons alignés exactement avec le topbar */
-div[data-testid="stHorizontalBlock"] {
-  gap: 0 !important;
-  align-items: stretch !important;
-}
-div[data-testid="stHorizontalBlock"] > div:last-child {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
-  border: 1px solid #252d3d;
-  border-left: none;
-  border-radius: 0 14px 14px 0;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  box-shadow: 0 2px 16px rgba(0,0,0,.4);
-}
-
-/* ── Radio Statut horizontal ── */
-div[data-testid="stRadio"] > div {
-  flex-direction: row !important;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-}
-div[data-testid="stRadio"] label {
-  background: #1a1f2e;
-  border: 1px solid #252d3d;
-  border-radius: 20px;
-  padding: 3px 12px;
-  font-size: .78rem !important;
-  color: #8899bb !important;
-  cursor: pointer;
-  transition: all .15s;
-}
-div[data-testid="stRadio"] label:has(input:checked) {
-  background: #252d3d;
-  border-color: #3b82f6;
-  color: #e2e8f4 !important;
-}
-div[data-testid="stRadio"] input { display: none; }
-div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
-  margin: 0; font-size: .78rem;
 }
 .wl-stats {
   display: flex;
@@ -1047,32 +989,12 @@ if dupes:
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
-# ── Header : stats + boutons sur la même ligne ───────────────────────────────
-from math import ceil
-n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-
-col_stats, col_btn = st.columns([4, 1])
-
-with col_stats:
-    stats_placeholder = st.empty()
-
-with col_btn:
-    btn_placeholder = st.empty()
-    # Les boutons sont rendus directement ici (pas besoin de placeholder)
-
-# Boutons dans la colonne droite
-with col_btn:
-    if st.button("Actualiser", use_container_width=True, key="btn_refresh"):
-        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
-        st.rerun()
-    if st.button("Beta & Earnings", use_container_width=True, key="btn_be"):
-        fetch_be.clear()
-        st.session_state["be_enabled"] = True
-        st.rerun()
+# Placeholder pour stats (mise à jour après fetch des prix)
+stats_placeholder = st.empty()
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
-    ok_str = f"{ok}/{total}" if ok is not None else "…"
-    ok_cls = "ok" if ok == total else "warn" if ok is not None else "muted"
+    ok_str   = f"{ok}/{total}" if ok is not None else "…"
+    ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
   <div class="wl-stats">
@@ -1096,7 +1018,23 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 </div>
 """, unsafe_allow_html=True)
 
+# Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
+
+# ── Boutons compacts ──────────────────────────────────────────────────────────
+from math import ceil
+n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+
+b1, b2 = st.columns([1, 1])
+with b1:
+    if st.button("Actualiser", use_container_width=True):
+        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        st.rerun()
+with b2:
+    if st.button("Beta & Earnings", use_container_width=True):
+        fetch_be.clear()
+        st.session_state["be_enabled"] = True
+        st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
@@ -1199,5 +1137,3 @@ components.html(
     """,
     height=0,
 )
-
-
