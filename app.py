@@ -721,13 +721,9 @@ def render_table(rows: list[dict]) -> None:
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
-               be_data: dict, sparklines: dict, key: str,
-               highlight_radar: bool = False,
-               global_search: str = "") -> None:
-    rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
-
-    c1, c2 = st.columns([1, 1])
+def render_tab(rows: list[dict], key: str) -> None:
+    """Reçoit les rows déjà filtrés/construits, gère uniquement tri + affichage."""
+    c1, c2 = st.columns([2, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
@@ -737,9 +733,6 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
         sf = st.selectbox("Statut",
             ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
 
-    if global_search:
-        q = global_search.lower()
-        rows = [r for r in rows if q in r["_ticker"].lower() or q in r["_name"].lower()]
     if sf != "Tous":
         rows = [r for r in rows if r["_statut"] == sf]
 
@@ -758,8 +751,17 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    # Stocker les rows pour l'export en bas de page
-    st.session_state[f"export_rows_{key}"] = rows
+    # Export Excel — entre les contrôles et le tableau
+    if rows:
+        xls_bytes = export_xlsx(rows)
+        st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
+        st.download_button(
+            "Export Excel", data=xls_bytes,
+            file_name=f"watchlist_{key}_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key}_xls",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
     render_table(rows)
 
@@ -1082,35 +1084,39 @@ global_search = st.text_input(
     label_visibility="collapsed",
 )
 
-tab1, tab2, tab3 = st.tabs([
-    f"Portefeuille ({len(pf_df)})",
-    f"Watchlist ({len(wl_df)})",
-    "Debug",
-])
-
-# Pré-calculer les rows des deux onglets pour la recherche globale
-# (indépendamment de l'onglet actif)
+# Construire les rows des deux onglets une seule fois
 rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
 rows_wl = build_rows(wl_df, prices, names, be_data, sparklines, True)
 
+# Appliquer la recherche globale
 if global_search:
     q = global_search.lower()
     rows_pf = [r for r in rows_pf if q in r["_ticker"].lower() or q in r["_name"].lower()]
     rows_wl = [r for r in rows_wl if q in r["_ticker"].lower() or q in r["_name"].lower()]
 
-st.session_state["export_rows_pf"] = rows_pf
-st.session_state["export_rows_wl"] = rows_wl
+if global_search:
+    # Vue combinée quand une recherche est active
+    combined = rows_pf + rows_wl
+    total = len(combined)
+    st.markdown(f"<div style='color:#5a6a8a;font-size:.75rem;margin:6px 0 4px'>"
+                f"{total} résultat(s) dans Portefeuille + Watchlist</div>",
+                unsafe_allow_html=True)
+    render_tab(combined, key="search")
+else:
+    # Vue normale par onglets
+    tab1, tab2, tab3 = st.tabs([
+        f"Portefeuille ({len(pf_df)})",
+        f"Watchlist ({len(wl_df)})",
+        "Debug",
+    ])
+    with tab1:
+        render_tab(rows_pf, key="pf")
+    with tab2:
+        render_tab(rows_wl, key="wl")
+    with tab3:
+        render_debug(tickers_df, prices, names)
 
-with tab1:
-    render_tab(pf_df, prices, names, be_data, sparklines, key="pf",
-               global_search=global_search)
-with tab2:
-    render_tab(wl_df, prices, names, be_data, sparklines, key="wl",
-               highlight_radar=True, global_search=global_search)
-with tab3:
-    render_debug(tickers_df, prices, names)
-
-# ── Auto-refresh + Export en bas de page ─────────────────────────────────────
+# ── Auto-refresh toutes les 30 minutes ───────────────────────────────────────
 import time as _time
 
 AUTO_REFRESH_SEC = 30 * 60
@@ -1120,25 +1126,7 @@ if "next_refresh" not in st.session_state:
 
 remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
 m, s = divmod(remaining, 60)
-
-# Rangée du bas : caption à gauche, export à droite (70% + 30%)
-bot1, bot2 = st.columns([7, 3])
-with bot1:
-    st.caption(f"Prochain rafraîchissement automatique dans {m}m {s:02d}s")
-with bot2:
-    all_rows = st.session_state.get("export_rows_pf", []) + \
-               st.session_state.get("export_rows_wl", [])
-    if all_rows:
-        xls_bytes = export_xlsx(all_rows)
-        # Colonne intérieure pour réduire la largeur à ~70% de bot2
-        _, inner = st.columns([3, 7])
-        with inner:
-            st.download_button(
-                "Export Excel", data=xls_bytes,
-                file_name=f"watchlist_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="export_global", use_container_width=True,
-            )
+st.caption(f"Rafraîchissement auto dans {m}m {s:02d}s")
 
 if remaining == 0:
     fetch_prices.clear()
