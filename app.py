@@ -758,15 +758,8 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    # Export XLS
-    if rows:
-        xls_bytes = export_xlsx(rows)
-        st.download_button(
-            "Export Excel", data=xls_bytes,
-            file_name=f"watchlist_{key}_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"{key}_xls",
-        )
+    # Stocker les rows pour l'export en bas de page
+    st.session_state[f"export_rows_{key}"] = rows
 
     render_table(rows)
 
@@ -1103,7 +1096,7 @@ with tab2:
 with tab3:
     render_debug(tickers_df, prices, names)
 
-# ── Auto-refresh toutes les 30 minutes ───────────────────────────────────────
+# ── Auto-refresh + Export en bas de page ─────────────────────────────────────
 import time as _time
 
 AUTO_REFRESH_SEC = 30 * 60
@@ -1113,7 +1106,25 @@ if "next_refresh" not in st.session_state:
 
 remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
 m, s = divmod(remaining, 60)
-st.caption(f"Prochain rafraîchissement automatique dans {m}m {s:02d}s")
+
+# Rangée du bas : caption à gauche, export à droite
+bot1, bot2 = st.columns([4, 1])
+with bot1:
+    st.caption(f"Prochain rafraîchissement automatique dans {m}m {s:02d}s")
+with bot2:
+    # Export de l'onglet actif (pf en priorité, wl sinon)
+    rows_pf = st.session_state.get("export_rows_pf", [])
+    rows_wl = st.session_state.get("export_rows_wl", [])
+    # On exporte les deux onglets concaténés
+    all_rows = rows_pf + rows_wl
+    if all_rows:
+        xls_bytes = export_xlsx(all_rows)
+        st.download_button(
+            "Export Excel", data=xls_bytes,
+            file_name=f"watchlist_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="export_global", use_container_width=True,
+        )
 
 if remaining == 0:
     fetch_prices.clear()
