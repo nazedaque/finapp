@@ -234,15 +234,21 @@ def _fetch_one_name(t: str) -> tuple[str, str]:
 
 @st.cache_data(ttl=META_TTL, show_spinner=False)
 def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
+    import time
     names: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_fetch_one_name, t): t for t in yf_tickers}
-        for future in as_completed(futures, timeout=300):
-            try:
-                t, name = future.result(timeout=20)
-                names[t] = name
-            except Exception:
-                names[futures[future]] = ""
+    tickers = list(yf_tickers)
+    for i in range(0, len(tickers), 10):
+        batch = tickers[i: i + 10]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_fetch_one_name, t): t for t in batch}
+            for future in as_completed(futures, timeout=60):
+                try:
+                    t, name = future.result(timeout=15)
+                    names[t] = name
+                except Exception:
+                    names[futures[future]] = ""
+        if i + 10 < len(tickers):
+            time.sleep(0.2)
     return names
 
 
@@ -292,16 +298,22 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
 @st.cache_data(ttl=META_TTL, show_spinner=False)
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     """Beta + Earnings — déclenchement manuel via bouton."""
+    import time
     results: dict[str, dict] = {}
     empty = {"beta": None, "earnings": None}
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_fetch_one_be, t): t for t in yf_tickers}
-        for future in as_completed(futures, timeout=300):
-            try:
-                t, data = future.result(timeout=20)
-                results[t] = data
-            except Exception:
-                results[futures[future]] = dict(empty)
+    tickers = list(yf_tickers)
+    for i in range(0, len(tickers), 10):
+        batch = tickers[i: i + 10]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_fetch_one_be, t): t for t in batch}
+            for future in as_completed(futures, timeout=60):
+                try:
+                    t, data = future.result(timeout=15)
+                    results[t] = data
+                except Exception:
+                    results[futures[future]] = dict(empty)
+        if i + 10 < len(tickers):
+            time.sleep(0.2)
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -485,7 +497,7 @@ def html_link(url) -> str:
     u = str(url).strip()
     if not u.startswith("http"): return ""
     return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
-            f'style="color:#7dd3fc;font-size:1.1rem;text-decoration:none">🔗</a>')
+            f'style="color:#7dd3fc;font-size:.85rem;text-decoration:none">🔗</a>')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
@@ -523,7 +535,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 
         # Mise en surbrillance "sous le radar" (watchlist, statut achat, score élevé)
         radar = (highlight_radar
-                 and score is not None and float(score) >= 50)
+                 and score is not None and float(score) >= 85)
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
