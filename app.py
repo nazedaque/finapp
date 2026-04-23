@@ -727,7 +727,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
                global_search: str = "") -> None:
     rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
 
-    c1, c2 = st.columns([2, 1])
+    c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
@@ -1029,7 +1029,7 @@ n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 
 b1, b2 = st.columns([1, 1])
 with b1:
-    if st.button("Actualiser", type="primary", use_container_width=True):
+    if st.button("Actualiser", use_container_width=True):
         fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
