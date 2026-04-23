@@ -115,16 +115,19 @@ def _normalize_col(s: str) -> str:
 
 
 @st.cache_data(ttl=SHEET_TTL, show_spinner=False)
-def load_tickers() -> tuple[pd.DataFrame, str]:
+def load_tickers(cache_bust: int = 0) -> tuple[pd.DataFrame, str]:
+    """cache_bust est un timestamp passé à l'appel pour forcer le rechargement."""
+    import time as _t
+    # Paramètre aléatoire pour contourner le cache CDN de Google
+    bust = cache_bust or int(_t.time())
+    url  = SHEET_CSV_URL + f"&_cb={bust}"
     source = "Google Sheet"
     df = None
 
-    # Essai 1 : Google Sheet avec utf-8-sig (gère le BOM)
     for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
-            df = pd.read_csv(SHEET_CSV_URL, encoding=enc, header=0, dtype=str)
+            df = pd.read_csv(url, encoding=enc, header=0, dtype=str)
             if not df.empty:
-                source = "Google Sheet"
                 break
         except Exception:
             continue
@@ -768,7 +771,8 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # ── 1. Sheet en premier ───────────────────────────────────────────────────────
 with st.spinner("Chargement du Google Sheet…"):
     try:
-        tickers_df, data_source = load_tickers()
+        bust = st.session_state.get("sheet_bust", 0)
+        tickers_df, data_source = load_tickers(cache_bust=bust)
     except Exception as exc:
         st.error(str(exc)); st.stop()
 
@@ -795,11 +799,12 @@ m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 rc1, rc2, rc3 = st.columns([1, 1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
-        # Ordre explicite : sheet d'abord, Yahoo ensuite
-        load_tickers.clear()      # 1. Sheet
-        fetch_names.clear()       # 2. Noms
-        fetch_prices.clear()      # 3. Cours
-        fetch_sparklines.clear()  # 4. Sparklines
+        import time as _t
+        load_tickers.clear()
+        fetch_names.clear()
+        fetch_prices.clear()
+        fetch_sparklines.clear()
+        st.session_state["sheet_bust"] = int(_t.time())
         st.rerun()
 with rc2:
     if st.button("Beta & Earnings", use_container_width=True):
