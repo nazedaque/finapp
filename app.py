@@ -987,12 +987,30 @@ if dupes:
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
-# Placeholder pour stats (mise à jour après fetch des prix)
-stats_placeholder = st.empty()
+# ── Header : stats + boutons sur la même ligne ───────────────────────────────
+from math import ceil
+n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+
+col_stats, col_btn = st.columns([4, 1])
+
+with col_stats:
+    stats_placeholder = st.empty()
+
+with col_btn:
+    btn_placeholder = st.empty()
+    # Les boutons sont rendus directement ici (pas besoin de placeholder)
+
+# Boutons dans la colonne droite
+with col_btn:
+    if st.button("Actualiser", use_container_width=True, key="btn_refresh"):
+        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        st.rerun()
+    if st.button("Beta & Earnings", use_container_width=True, key="btn_be"):
+        fetch_be.clear(); st.rerun()
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
-    ok_str   = f"{ok}/{total}" if ok is not None else "…"
-    ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
+    ok_str = f"{ok}/{total}" if ok is not None else "…"
+    ok_cls = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
   <div class="wl-stats">
@@ -1016,21 +1034,7 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 </div>
 """, unsafe_allow_html=True)
 
-# Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
-
-# ── Boutons compacts ──────────────────────────────────────────────────────────
-from math import ceil
-n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-
-b1, b2 = st.columns([1, 1])
-with b1:
-    if st.button("Actualiser", use_container_width=True):
-        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
-        st.rerun()
-with b2:
-    if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear(); st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
@@ -1126,8 +1130,6 @@ if "next_refresh" not in st.session_state:
     st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
 
 remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
-m, s = divmod(remaining, 60)
-st.caption(f"Rafraîchissement auto dans {m}m {s:02d}s")
 
 if remaining == 0:
     fetch_prices.clear()
