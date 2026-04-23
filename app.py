@@ -639,8 +639,6 @@ def export_xlsx(rows: list[dict]) -> bytes:
 CSS = """<style>
 .wl-wrap {
   overflow-x: auto;
-  max-height: 70vh;
-  overflow-y: auto;
   border-radius: 12px;
   border: 1px solid #252d3d;
   background: #141824;
@@ -722,15 +720,15 @@ def render_table(rows: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(rows: list[dict], key: str) -> None:
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        sort_choice = st.selectbox("Tri", [
-            "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
-        ], key=f"{key}_t")
-    with c2:
-        sf = st.selectbox("Statut",
-            ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
+    sf = st.radio(
+        "Statut",
+        ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"],
+        horizontal=True, key=f"{key}_f",
+    )
+    sort_choice = st.selectbox("Tri", [
+        "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
+        "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
+    ], key=f"{key}_t")
 
     if sf != "Tous":
         rows = [r for r in rows if r["_statut"] == sf]
@@ -868,10 +866,57 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
-  border-radius: 14px;
+  border-radius: 14px 0 0 14px;
   padding: 14px 24px;
   margin-bottom: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Boutons alignés exactement avec le topbar */
+div[data-testid="stHorizontalBlock"] {
+  gap: 0 !important;
+  align-items: stretch !important;
+}
+div[data-testid="stHorizontalBlock"] > div:last-child {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
+  border: 1px solid #252d3d;
+  border-left: none;
+  border-radius: 0 14px 14px 0;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.4);
+}
+
+/* ── Radio Statut horizontal ── */
+div[data-testid="stRadio"] > div {
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+div[data-testid="stRadio"] label {
+  background: #1a1f2e;
+  border: 1px solid #252d3d;
+  border-radius: 20px;
+  padding: 3px 12px;
+  font-size: .78rem !important;
+  color: #8899bb !important;
+  cursor: pointer;
+  transition: all .15s;
+}
+div[data-testid="stRadio"] label:has(input:checked) {
+  background: #252d3d;
+  border-color: #3b82f6;
+  color: #e2e8f4 !important;
+}
+div[data-testid="stRadio"] input { display: none; }
+div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+  margin: 0; font-size: .78rem;
 }
 .wl-stats {
   display: flex;
@@ -907,7 +952,24 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 .wl-stat-val.ok    { color: #22c55e; }
 .wl-stat-val.warn  { color: #fbbf24; }
 
-/* ── Boutons ── */
+/* ── Alignement boutons / card stats ── */
+div[data-testid="column"]:has(div[data-testid="stVerticalBlock"] .stButton) {
+  display: flex !important;
+  flex-direction: column !important;
+}
+div[data-testid="column"]:has(.stButton) > div[data-testid="stVerticalBlock"] {
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+div[data-testid="column"]:has(.stButton) .stButton {
+  flex: 1 !important;
+}
+div[data-testid="column"]:has(.stButton) .stButton > button {
+  height: 100% !important;
+  min-height: 36px !important;
+}
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
   border: none !important; border-radius: 8px !important;
