@@ -29,19 +29,6 @@ META_TTL          = 86_400
 SPARK_TTL         = 86_400
 BATCH_SIZE        = 75
 
-EXCHANGE_MAP: dict[str, str] = {
-    "EPA": ".PA", "ETR": ".DE", "FRA": ".F",  "LON": ".L",  "AMS": ".AS",
-    "BIT": ".MI", "BME": ".MC", "STO": ".ST", "SWX": ".SW", "TYO": ".T",
-    "TSE": ".TO", "HKG": ".HK", "SGX": ".SI", "HEL": ".HE", "VIE": ".VI",
-    "CPH": ".CO", "EBR": ".BR", "WSE": ".WA", "CVE": ".V",
-    "NYSE": "",   "NASDAQ": "",
-}
-MANUAL_OVERRIDES: dict[str, str] = {
-    "JST": "JST.DE", "BETS-B": "BETS-B.ST", "MOUR": "MOUR.BR",
-    "EPA:HAVAS": "HAVAS.AS", "TSE:DHT.U": "DHT-UN.TO",
-    "TSE:CTC.A": "CTC-A.TO", "CPH:VAR": "VAR.OL",
-}
-
 STATUT_ORDER = {"Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9}
 STATUT_COLOR = {
     "Strong buy": "#1f8b4c", "Buy": "#6dbf4b", "Fair": "#d4b000",
@@ -75,15 +62,6 @@ CENTER = {"MAJ", "Prix", "Var %", "Upside", "Spark", "Score",
 def normalize_col(s: str) -> str:
     nfkd = unicodedata.normalize("NFD", str(s))
     return "".join(c for c in nfkd if unicodedata.category(c) != "Mn").strip().lower()
-
-def gf_to_yf(gf: str) -> str | None:
-    gf = str(gf).strip()
-    if not gf: return None
-    if gf in MANUAL_OVERRIDES: return MANUAL_OVERRIDES[gf]
-    if ":" not in gf: return gf
-    exchange, symbol = gf.split(":", 1)
-    suffix = EXCHANGE_MAP.get(exchange)
-    return f"{symbol}{suffix}" if suffix is not None else None
 
 def parse_num(v) -> float | None:
     if v is None: return None
@@ -123,7 +101,7 @@ SHEET_COL_NORMALIZED = {
     "spot":        "spot_sheet",
     "score mixte": "score_sheet",
     "last update": "last_update",
-    "yf ticker":   "yf_ticker_override",
+    "yf ticker":   "yf_ticker",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
 
@@ -205,13 +183,16 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     else:
         df["last_update"] = None
 
-    def resolve_yf(row) -> str | None:
-        override = row.get("yf_ticker_override")
-        if pd.notna(override) and str(override).strip() not in ("", "nan", "None"):
-            return str(override).strip()
-        return gf_to_yf(str(row["gf_ticker"]))
-
-    df["yf_ticker"] = df.apply(resolve_yf, axis=1)
+    # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
+    # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
+    if "yf_ticker" not in df.columns or df["yf_ticker"].isna().all():
+        df["yf_ticker"] = df["gf_ticker"].astype(str)
+    else:
+        df["yf_ticker"] = df["yf_ticker"].where(
+            df["yf_ticker"].notna() &
+            ~df["yf_ticker"].astype(str).str.strip().isin(["", "nan", "None"]),
+            other=df["gf_ticker"].astype(str)
+        )
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -853,3 +834,24 @@ with tab2:
     render_tab(wl_df, prices, names, be_data, sparklines, key="wl", highlight_radar=True)
 with tab3:
     render_debug(tickers_df, prices, names)
+
+# ── Auto-refresh toutes les 30 minutes ───────────────────────────────────────
+import time as _time
+
+AUTO_REFRESH_SEC = 30 * 60
+
+if "next_refresh" not in st.session_state:
+    st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
+
+remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
+m, s = divmod(remaining, 60)
+st.caption(f"Prochain rafraîchissement automatique dans {m}m {s:02d}s")
+
+if remaining == 0:
+    fetch_prices.clear()
+    st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
+    st.rerun()
+else:
+    # Vérifie toutes les 60 secondes sans bloquer l'UI
+    _time.sleep(60)
+    st.rerun()
