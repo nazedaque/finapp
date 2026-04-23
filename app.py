@@ -612,30 +612,38 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_debug(tickers_df: pd.DataFrame, prices: dict, metadata: dict) -> None:
+    # Colonnes disponibles (on ne sélectionne que celles qui existent)
+    def safe_cols(df: pd.DataFrame, wanted: list[str]) -> list[str]:
+        return [c for c in wanted if c in df.columns]
+
+    base_cols = safe_cols(tickers_df, ["gf_ticker", "yf_ticker", "name"])
+
     st.subheader("Tickers sans prix Yahoo")
-    no_price = tickers_df[tickers_df["yf_ticker"].apply(
+    mask_no_price = tickers_df["yf_ticker"].apply(
         lambda t: prices.get(str(t), {}).get("price") is None if pd.notna(t) else True
-    )][["gf_ticker", "yf_ticker", "name"]].copy()
-    st.dataframe(no_price, use_container_width=True, hide_index=True)
+    ) if "yf_ticker" in tickers_df.columns else pd.Series([False] * len(tickers_df))
+    st.dataframe(tickers_df.loc[mask_no_price, base_cols],
+                 use_container_width=True, hide_index=True)
 
     st.subheader("Tickers sans nom")
-    no_name = tickers_df[tickers_df.apply(
-        lambda r: not r["name"] and not metadata.get(str(r["yf_ticker"]), {}).get("name"),
-        axis=1
-    )][["gf_ticker", "yf_ticker"]].copy()
-    st.dataframe(no_name, use_container_width=True, hide_index=True)
+    def _no_name(r):
+        n = r.get("name", "") or ""
+        yf = str(r.get("yf_ticker", ""))
+        return not n and not metadata.get(yf, {}).get("name", "")
+    mask_no_name = tickers_df.apply(_no_name, axis=1)
+    st.dataframe(tickers_df.loc[mask_no_name, base_cols],
+                 use_container_width=True, hide_index=True)
 
     st.subheader("Tickers sans earnings")
-    no_earn = tickers_df[tickers_df["yf_ticker"].apply(
+    mask_no_earn = tickers_df["yf_ticker"].apply(
         lambda t: metadata.get(str(t), {}).get("earnings") is None if pd.notna(t) else True
-    )][["gf_ticker", "yf_ticker", "name"]].copy()
-    st.dataframe(no_earn, use_container_width=True, hide_index=True)
+    ) if "yf_ticker" in tickers_df.columns else pd.Series([True] * len(tickers_df))
+    st.dataframe(tickers_df.loc[mask_no_earn, base_cols],
+                 use_container_width=True, hide_index=True)
 
-    st.subheader("Mapping gf_ticker → yf_ticker")
-    st.dataframe(
-        tickers_df[["gf_ticker", "yf_ticker", "name"]],
-        use_container_width=True, hide_index=True, height=400,
-    )
+    st.subheader("Mapping complet gf_ticker → yf_ticker")
+    st.dataframe(tickers_df[base_cols], use_container_width=True,
+                 hide_index=True, height=400)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APP PRINCIPALE
