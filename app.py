@@ -160,6 +160,11 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
+    # Colonne A = case à cocher (TRUE/FALSE) — lue par position avant tout renommage
+    df["flagged"] = df.iloc[:, 0].apply(
+        lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
+    )
+
     # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
     df = df[~df["gf_ticker"].astype(str).str.strip().isin(
@@ -537,7 +542,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         name_html = name_u if name_u else f'<span style="color:#475569;font-style:italic">{gf}</span>'
 
         # Mise en surbrillance "sous le radar"
-        radar = (highlight_radar and score is not None and float(score) >= 85)
+        radar   = (highlight_radar and score is not None and float(score) >= 85)
+        flagged = bool(r.get("flagged", False))
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
@@ -551,6 +557,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_name":         name,
             "_statut":       statut,
             "_radar":        radar,
+            "_flagged":      flagged,
             # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
@@ -625,6 +632,8 @@ CSS = """<style>
 .wl-table tbody tr:hover td{background:#ffffff0a}
 .wl-radar td{background:#0f2920 !important}
 .wl-radar:hover td{background:#1a3d2b !important}
+.wl-flagged td{background:#1e1535 !important}
+.wl-flagged:hover td{background:#2a1d4a !important}
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -638,7 +647,12 @@ def render_table(rows: list[dict]) -> None:
     )
     trs = []
     for r in rows:
-        cls = ' class="wl-radar"' if r["_radar"] else ""
+        if r["_flagged"]:
+            cls = ' class="wl-flagged"'
+        elif r["_radar"]:
+            cls = ' class="wl-radar"'
+        else:
+            cls = ""
         tds = "".join(
             f'<td class="{"c" if c in CENTER else ("" if c != "Société" else "")}">'
             f'{r[c]}</td>' for c in DISPLAY_COLS
