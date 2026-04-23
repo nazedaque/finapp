@@ -77,11 +77,9 @@ def parse_num(v) -> float | None:
     except ValueError: return None
 
 def stockopedia_url(gf_ticker: str, name: str) -> str:
-    """Construit l'URL Stockopedia depuis le nom + ticker GF."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
     if slug:
         return f"https://www.stockopedia.com/share-prices/{slug}/{gf_ticker}/"
-    # Fallback : recherche Stockopedia
     sym = gf_ticker.split(":")[-1]
     return f"https://www.stockopedia.com/search/?q={sym}"
 
@@ -108,7 +106,6 @@ NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_shee
 
 
 def _normalize_col(s: str) -> str:
-    """Normalisation agressive : supprime BOM, accents, espaces, casse."""
     s = str(s).replace("\ufeff", "").replace("\u202f", "").replace("\xa0", "")
     nfkd = unicodedata.normalize("NFD", s)
     s = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
@@ -116,7 +113,6 @@ def _normalize_col(s: str) -> str:
 
 
 def load_tickers() -> tuple[pd.DataFrame, str]:
-    """Toujours re-fetché depuis le sheet — pas de cache."""
     import time as _t
     bust  = int(_t.time())
     url   = SHEET_CSV_URL + f"&_cb={bust}"
@@ -131,7 +127,6 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         except Exception:
             continue
 
-    # Essai 2 : CSV local
     if df is None or df.empty:
         try:
             df = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0, dtype=str)
@@ -139,7 +134,6 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         except Exception as exc:
             raise RuntimeError(f"Impossible de charger les données : {exc}") from exc
 
-    # Renommage robuste avec normalisation agressive
     rename_map: dict[str, str] = {}
     for col in df.columns:
         norm = _normalize_col(col)
@@ -147,25 +141,20 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             rename_map[col] = SHEET_COL_NORMALIZED[norm]
     df = df.rename(columns=rename_map)
 
-    # Colonnes manquantes → NA
     for col in SHEET_COL_NORMALIZED.values():
         if col not in df.columns:
             df[col] = pd.NA
 
-    # Si gf_ticker est toujours vide, essai positionnel (col C = index 2)
     if df["gf_ticker"].isna().all() and len(df.columns) > 2:
         candidate = df.iloc[:, 2].dropna().astype(str)
-        # Vérifier que ça ressemble à des tickers (pas de valeurs numériques pures)
         looks_like_tickers = candidate.str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
-    # Colonne A = case à cocher (TRUE/FALSE) — lue par position avant tout renommage
     df["flagged"] = df.iloc[:, 0].apply(
         lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
     )
 
-    # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
     df = df[~df["gf_ticker"].astype(str).str.strip().isin(
         ["", "Ticker", "gf_ticker", "nan", "None"])].copy()
@@ -190,8 +179,6 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     else:
         df["last_update"] = None
 
-    # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
-    # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
     if "yf_ticker" not in df.columns or df["yf_ticker"].isna().all():
         df["yf_ticker"] = df["gf_ticker"].astype(str)
     else:
@@ -201,18 +188,16 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             other=df["gf_ticker"].astype(str)
         )
 
-    # Détection des doublons
     dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
     st.session_state["ticker_dupes"] = dupes.to_dict("records") if not dupes.empty else []
 
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Métadonnées (nom, beta, earnings) — parallèle, cache 24h
+# Métadonnées
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _fetch_one_name(t: str) -> tuple[str, str]:
-    """Récupère uniquement le nom — rapide, via history_metadata."""
     try:
         tk = yf.Ticker(t)
         tk.history(period="2d", interval="1d")
@@ -246,7 +231,6 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
 
 
 def _fetch_one_be(t: str) -> tuple[str, dict]:
-    """Récupère beta + earnings — plus lent, via .info et .calendar."""
     result: dict = {"beta": None, "earnings": None}
     try:
         tk = yf.Ticker(t)
@@ -290,7 +274,6 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
 
 @st.cache_data(ttl=META_TTL, show_spinner=False)
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    """Beta + Earnings — déclenchement manuel via bouton."""
     import time
     results: dict[str, dict] = {}
     empty = {"beta": None, "earnings": None}
@@ -352,7 +335,7 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Sparklines 52 semaines — cache 24h
+# Sparklines
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=SPARK_TTL, show_spinner=False)
@@ -402,7 +385,6 @@ def compute_score(ratio, note) -> float | None:
     except Exception: return None
 
 def compute_upside(price, fair, trim) -> float | None:
-    """Upside entre prix actuel et moyenne(Fair, Trim)."""
     try:
         target = (float(fair) + float(trim)) / 2
         return (target - float(price)) / float(price) * 100
@@ -429,12 +411,6 @@ def fmt_beta(v) -> str:
     return f"{float(v):.2f}"
 
 def fmt_maj(maj_date, earnings_date) -> str:
-    """
-    MAJ rouge si :
-    - Earnings existe ET est dans le passé ET MAJ < Earnings
-      (l'analyse précède les derniers résultats publiés → potentiellement obsolète)
-    - Pas d'Earnings ET MAJ > 30 jours
-    """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
         return "—"
     try:
@@ -443,9 +419,8 @@ def fmt_maj(maj_date, earnings_date) -> str:
         today = date.today()
         red = False
         if earnings_date is not None:
-            # Seulement si les earnings sont dans le passé
             if earnings_date < today:
-                red = d < earnings_date  # analyse antérieure aux derniers résultats
+                red = d < earnings_date
         else:
             red = (today - d).days > 30
         return f'<span style="color:#ef4444">{s}</span>' if red else s
@@ -499,10 +474,7 @@ def html_sparkline(closes: list[float]) -> str:
     )
     up    = closes[-1] >= closes[0]
     color = "#22c55e" if up else "#ef4444"
-    # Zone remplie sous la courbe
-    first_x = "0"
-    last_x  = str(w)
-    fill_pts = f"0,{h} {pts} {last_x},{h}"
+    fill_pts = f"0,{h} {pts} {str(w)},{h}"
     return (
         f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
         f'style="display:inline-block;vertical-align:middle;opacity:.9">'
@@ -561,7 +533,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else f'<span style="color:#475569;font-style:italic">{gf}</span>'
 
-        # Mise en surbrillance "sous le radar"
         radar   = (highlight_radar and score is not None and float(score) >= 85)
         flagged = bool(r.get("flagged", False))
 
@@ -578,7 +549,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_statut":       statut,
             "_radar":        radar,
             "_flagged":      flagged,
-            # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "Ticker":   gf, "Société": name_u,
@@ -590,7 +560,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Statut":   statut,
                 "Earnings": earnings.strftime("%d-%m-%Y") if earnings else "",
             },
-            # HTML
             "MAJ":      fmt_maj(r.get("last_update"), earnings),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
@@ -625,7 +594,6 @@ def export_xlsx(rows: list[dict]) -> bytes:
     for r in rows:
         raw = r["_raw"]
         ws.append([raw.get(c, "") for c in cols])
-    # Largeurs
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = 14
     buf = io.BytesIO()
@@ -757,7 +725,6 @@ def render_tab(rows: list[dict], key: str) -> None:
         with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
             st.write(", ".join(missing))
 
-    # Export Excel — sous le tableau, aligné à droite, avec espacement
     if rows:
         st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
         _, right = st.columns([3, 1])
@@ -780,7 +747,6 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
 
-    # Affichage brut CSV pour vérifier les noms originaux
     with st.expander("Colonnes brutes du CSV (2 premières lignes)"):
         try:
             df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8-sig", header=0,
@@ -828,7 +794,6 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # APP PRINCIPALE
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── 1. Sheet en premier ───────────────────────────────────────────────────────
 with st.spinner("Chargement du Google Sheet…"):
     try:
         tickers_df, data_source = load_tickers()
@@ -849,92 +814,52 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
-# ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Fond & layout ── */
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
 .block-container { padding-top: 3rem !important; max-width: 100% !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
-/* ── Header custom ── */
 .wl-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
-  border: 1px solid #252d3d;
-  border-radius: 14px;
-  padding: 14px 24px;
-  margin-bottom: 12px;
+  border: 1px solid #252d3d; border-radius: 14px;
+  padding: 14px 24px; margin-bottom: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
-.wl-stats {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  flex: 1;
-  justify-content: center;
-}
-.wl-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0 28px;
-}
-.wl-stat + .wl-stat {
-  border-left: 1px solid #252d3d;
-}
-.wl-stat-label {
-  font-size: .65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: #4a5980;
-  margin-bottom: 3px;
-}
-.wl-stat-val {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: #e2e8f4;
-  font-variant-numeric: tabular-nums;
-}
+.wl-stats { display: flex; align-items: center; gap: 0; flex: 1; justify-content: center; }
+.wl-stat { display: flex; flex-direction: column; align-items: center; padding: 0 28px; }
+.wl-stat + .wl-stat { border-left: 1px solid #252d3d; }
+.wl-stat-label { font-size: .65rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .1em; color: #4a5980; margin-bottom: 3px; }
+.wl-stat-val { font-size: 1.3rem; font-weight: 700; color: #e2e8f4; font-variant-numeric: tabular-nums; }
 .wl-stat-val.muted { font-size: 1rem; color: #8899bb; }
 .wl-stat-val.ok    { color: #22c55e; }
 .wl-stat-val.warn  { color: #fbbf24; }
 
-/* ── Boutons ── */
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
-  border: none !important; border-radius: 8px !important;
-  color: #fff !important; font-weight: 600 !important;
-  font-size: .8rem !important; padding: 0 18px !important;
+  border: none !important; border-radius: 8px !important; color: #fff !important;
+  font-weight: 600 !important; font-size: .8rem !important;
   box-shadow: 0 2px 8px rgba(59,130,246,.4) !important;
-  white-space: nowrap !important;
 }
 .stButton > button[kind="primary"]:hover { opacity: .88 !important; }
 .stButton > button {
   background: #1a1f2e !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #8899bb !important;
   font-size: .8rem !important; font-weight: 500 !important;
-  white-space: nowrap !important;
 }
 .stButton > button:hover { border-color: #3b82f6 !important; color: #93c5fd !important; }
-
-/* ── Download ── */
 .stDownloadButton > button {
   background: #1a1f2e !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #5a6a8a !important; font-size: .75rem !important;
 }
-
-/* ── Onglets ── */
 .stTabs [data-baseweb="tab-list"] {
-  background: #141824; border-radius: 10px; padding: 4px; gap: 2px;
-  border: 1px solid #252d3d;
+  background: #141824; border-radius: 10px; padding: 4px; gap: 2px; border: 1px solid #252d3d;
 }
 .stTabs [data-baseweb="tab"] {
   background: transparent !important; border-radius: 7px !important;
@@ -942,29 +867,21 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   font-weight: 500 !important; padding: 6px 18px !important; border: none !important;
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
-
-/* ── Recherche ── */
 .stTextInput > div > div > input {
   background: #141824 !important; border: 1px solid #252d3d !important;
-  border-radius: 8px !important; color: #e2e8f4 !important;
-  font-size: .82rem !important; padding: 8px 12px !important;
+  border-radius: 8px !important; color: #e2e8f4 !important; font-size: .82rem !important;
 }
 .stTextInput > div > div > input:focus {
-  border-color: #3b82f6 !important;
-  box-shadow: 0 0 0 3px rgba(59,130,246,.15) !important;
+  border-color: #3b82f6 !important; box-shadow: 0 0 0 3px rgba(59,130,246,.15) !important;
 }
 label[data-testid="stWidgetLabel"] p {
   font-size: .72rem !important; font-weight: 600 !important;
   color: #5a6a8a !important; text-transform: uppercase; letter-spacing: .07em;
 }
-
-/* ── Selectbox ── */
 .stSelectbox > div > div {
   background: #141824 !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #e2e8f4 !important; font-size: .82rem !important;
 }
-
-/* ── Misc ── */
 hr { border-color: #1e2535 !important; }
 .stCaption, .stCaption p { color: #3a4560 !important; font-size: .72rem !important; }
 .stWarning {
@@ -978,21 +895,31 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Alertes doublons ──────────────────────────────────────────────────────────
 dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
     tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
     st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
 
-# ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
-# Placeholder pour stats (mise à jour après fetch des prix)
-stats_placeholder = st.empty()
+from math import ceil
+n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+
+col_stats, col_btn = st.columns([4, 1])
+
+with col_stats:
+    stats_placeholder = st.empty()
+
+with col_btn:
+    if st.button("Actualiser", type="primary", use_container_width=True, key="btn_refresh"):
+        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        st.rerun()
+    if st.button("Beta & Earnings", use_container_width=True, key="btn_be"):
+        fetch_be.clear(); st.rerun()
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
-    ok_str   = f"{ok}/{total}" if ok is not None else "…"
-    ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
+    ok_str = f"{ok}/{total}" if ok is not None else "…"
+    ok_cls = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
   <div class="wl-stats">
@@ -1016,47 +943,24 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 </div>
 """, unsafe_allow_html=True)
 
-# Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
 
-# ── Boutons compacts ──────────────────────────────────────────────────────────
-from math import ceil
-n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-
-b1, b2 = st.columns([1, 1])
-with b1:
-    if st.button("Actualiser", use_container_width=True):
-        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
-        st.rerun()
-with b2:
-    if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear(); st.rerun()
-
-# ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
     names = fetch_names(valid_yf)
 
-# ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
-be_data = fetch_be(valid_yf)   # pas de spinner : déjà en cache, quasi-instantané
+be_data = fetch_be(valid_yf)
 
-# ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
 with st.spinner("Cours en temps réel…"):
     prices = fetch_prices(valid_yf)
 
-# ── 5. Sparklines (Yahoo, cache 24h) ─────────────────────────────────────────
 with st.spinner("Sparklines 52 semaines…"):
     sparklines = fetch_sparklines(valid_yf)
 
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
-
 ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
-
-# Mise à jour du topbar avec les prix récupérés
 render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
               ok=ok, total=len(valid_yf))
 
-# ── Recherche globale ──────────────────────────────────────────────────────────
-# Auto-sélection du texte dans tous les champs texte
 components.html("""
 <script>
 (function() {
@@ -1071,40 +975,32 @@ components.html("""
     }
     attachSelectAll();
     new MutationObserver(attachSelectAll).observe(
-        window.parent.document.body,
-        {childList: true, subtree: true}
+        window.parent.document.body, {childList: true, subtree: true}
     );
 })();
 </script>
 """, height=0)
 
 global_search = st.text_input(
-    "Recherche",
-    placeholder="Ticker ou société…",
-    key="global_search",
-    label_visibility="collapsed",
+    "Recherche", placeholder="Ticker ou société…",
+    key="global_search", label_visibility="collapsed",
 )
 
-# Construire les rows des deux onglets une seule fois
 rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
 rows_wl = build_rows(wl_df, prices, names, be_data, sparklines, True)
 
-# Appliquer la recherche globale
 if global_search:
     q = global_search.lower()
     rows_pf = [r for r in rows_pf if q in r["_ticker"].lower() or q in r["_name"].lower()]
     rows_wl = [r for r in rows_wl if q in r["_ticker"].lower() or q in r["_name"].lower()]
 
 if global_search:
-    # Vue combinée quand une recherche est active
     combined = rows_pf + rows_wl
-    total = len(combined)
     st.markdown(f"<div style='color:#5a6a8a;font-size:.75rem;margin:6px 0 4px'>"
-                f"{total} résultat(s) dans Portefeuille + Watchlist</div>",
+                f"{len(combined)} résultat(s) dans Portefeuille + Watchlist</div>",
                 unsafe_allow_html=True)
     render_tab(combined, key="search")
 else:
-    # Vue normale par onglets
     tab1, tab2, tab3 = st.tabs([
         f"Portefeuille ({len(pf_df)})",
         f"Watchlist ({len(wl_df)})",
@@ -1117,23 +1013,15 @@ else:
     with tab3:
         render_debug(tickers_df, prices, names)
 
-# ── Auto-refresh toutes les 30 minutes ───────────────────────────────────────
 import time as _time
-
 AUTO_REFRESH_SEC = 30 * 60
-
 if "next_refresh" not in st.session_state:
     st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
-
 remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
-m, s = divmod(remaining, 60)
-st.caption(f"Rafraîchissement auto dans {m}m {s:02d}s")
-
 if remaining == 0:
     fetch_prices.clear()
     st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
     st.rerun()
 else:
-    # Vérifie toutes les 60 secondes sans bloquer l'UI
     _time.sleep(60)
     st.rerun()
