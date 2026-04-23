@@ -58,11 +58,11 @@ DISPLAY_COLS = [
     "Statut", "Earnings", "🔗",
 ]
 COL_WIDTHS = {
-    "MAJ": "92px", "Ticker": "100px", "Société": "210px",
+    "MAJ": "92px", "Ticker": "82px", "Société": "210px",
     "Prix": "78px", "Var %": "80px", "Upside": "72px", "Spark": "88px",
     "Score": "52px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
     "Qualité": "58px", "Beta": "56px", "Statut": "90px",
-    "Earnings": "98px", "🔗": "30px",
+    "Earnings": "98px", "🔗": "44px",
 }
 CENTER = {"MAJ", "Prix", "Var %", "Upside", "Spark", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
@@ -218,22 +218,46 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # Métadonnées (nom, beta, earnings) — parallèle, cache 24h
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_one_meta(t: str) -> tuple[str, dict]:
-    result: dict = {"name": "", "beta": None, "earnings": None}
+def _fetch_one_name(t: str) -> tuple[str, str]:
+    """Récupère uniquement le nom — rapide, via history_metadata."""
+    try:
+        tk = yf.Ticker(t)
+        tk.history(period="2d", interval="1d")
+        meta = getattr(tk, "history_metadata", None) or {}
+        name = (meta.get("shortName") or meta.get("longName") or "").strip()
+        if not name:
+            info = tk.fast_info
+            name = (getattr(info, "shortName", None) or "").strip()
+        return t, name
+    except Exception:
+        return t, ""
+
+@st.cache_data(ttl=META_TTL, show_spinner=False)
+def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_fetch_one_name, t): t for t in yf_tickers}
+        for future in as_completed(futures, timeout=300):
+            try:
+                t, name = future.result(timeout=20)
+                names[t] = name
+            except Exception:
+                names[futures[future]] = ""
+    return names
+
+
+def _fetch_one_be(t: str) -> tuple[str, dict]:
+    """Récupère beta + earnings — plus lent, via .info et .calendar."""
+    result: dict = {"beta": None, "earnings": None}
     try:
         tk = yf.Ticker(t)
         try:
-            tk.history(period="2d", interval="1d")
-            meta = getattr(tk, "history_metadata", None) or {}
-            result["name"] = (meta.get("shortName") or meta.get("longName") or "").strip()
-        except Exception: pass
-        try:
             info = tk.info or {}
-            if not result["name"]:
-                result["name"] = (info.get("shortName") or info.get("longName") or "").strip()
             b = info.get("beta")
-            if b is not None: result["beta"] = float(b)
-        except Exception: pass
+            if b is not None:
+                result["beta"] = float(b)
+        except Exception:
+            pass
         try:
             cal = tk.calendar
             if cal is not None:
@@ -245,26 +269,33 @@ def _fetch_one_meta(t: str) -> tuple[str, dict]:
                         for d in dates:
                             try:
                                 if hasattr(d, "date"): d = d.date()
-                                elif isinstance(d, str): d = datetime.strptime(d[:10], "%Y-%m-%d").date()
+                                elif isinstance(d, str):
+                                    d = datetime.strptime(d[:10], "%Y-%m-%d").date()
                                 parsed.append(d)
-                            except Exception: pass
-                        if parsed: result["earnings"] = min(parsed)
+                            except Exception:
+                                pass
+                        if parsed:
+                            result["earnings"] = min(parsed)
                 elif hasattr(cal, "loc"):
                     try:
                         d = cal.loc["Earnings Date"].iloc[0]
                         if hasattr(d, "date"): d = d.date()
                         result["earnings"] = d
-                    except Exception: pass
-        except Exception: pass
-    except Exception: pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    except Exception:
+        pass
     return t, result
 
 @st.cache_data(ttl=META_TTL, show_spinner=False)
-def fetch_metadata(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+    """Beta + Earnings — déclenchement manuel via bouton."""
     results: dict[str, dict] = {}
-    empty = {"name": "", "beta": None, "earnings": None}
+    empty = {"beta": None, "earnings": None}
     with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_fetch_one_meta, t): t for t in yf_tickers}
+        futures = {executor.submit(_fetch_one_be, t): t for t in yf_tickers}
         for future in as_completed(futures, timeout=300):
             try:
                 t, data = future.result(timeout=20)
@@ -461,19 +492,19 @@ def html_link(url) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
-               metadata: dict, sparklines: dict,
+               names: dict, be_data: dict, sparklines: dict,
                highlight_radar: bool = False) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
         yf_t   = r.get("yf_ticker")
         yf_s   = str(yf_t) if pd.notna(yf_t) else ""
         q      = prices.get(yf_s, {})
-        meta   = metadata.get(yf_s, {})
+        be     = be_data.get(yf_s, {})
 
         price  = q.get("price") or (r.get("spot_sheet") if pd.notna(r.get("spot_sheet")) else None)
         chg    = q.get("chg")
         name   = (r.get("name") or "") if pd.notna(r.get("name")) else ""
-        name   = name or meta.get("name", "")
+        name   = name or names.get(yf_s, "")
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
@@ -483,8 +514,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         if score is None and pd.notna(r.get("score_sheet")):
             score = r.get("score_sheet")
         upside  = compute_upside(price, fair, trim)
-        beta    = meta.get("beta")
-        earnings = meta.get("earnings")
+        beta    = be.get("beta")
+        earnings = be.get("earnings")
         sparks  = sparklines.get(yf_s, [])
 
         gf = str(r["gf_ticker"])
@@ -492,8 +523,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 
         # Mise en surbrillance "sous le radar" (watchlist, statut achat, score élevé)
         radar = (highlight_radar
-                 and statut in ("Strong buy", "Buy")
-                 and score is not None and float(score) >= 75)
+                 and score is not None and float(score) >= 50)
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
@@ -501,6 +531,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
             "_upside":       upside if upside is not None else -999.0,
+            "_beta":         float(beta) if beta is not None else None,
             "_price_ok":     price is not None,
             "_ticker":       gf,
             "_name":         name,
@@ -610,9 +641,10 @@ def render_table(rows: list[dict]) -> None:
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
-               sparklines: dict, key: str, highlight_radar: bool = False) -> None:
-    rows = build_rows(df_sub, prices, metadata, sparklines, highlight_radar)
+def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
+               be_data: dict, sparklines: dict, key: str,
+               highlight_radar: bool = False) -> None:
+    rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
@@ -620,7 +652,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
     with c2:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↑", "MAJ ↓",
+            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
         ], key=f"{key}_t")
     with c3:
         sf = st.selectbox("Statut",
@@ -640,8 +672,8 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
         "Upside ↓":       lambda r: -r["_upside"],
         "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
         "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
-        "MAJ ↑":          lambda r: r["_maj"] or date.min,
-        "MAJ ↓":          lambda r: (r["_maj"] or date.max),
+        "MAJ ↓":          lambda r: r["_maj"] or date.max,
+        "Beta ↓":         lambda r: (r["_beta"] is None, -(r["_beta"] or 0)),
     }
     key_fn = sort_map.get(sort_choice)
     if key_fn:
@@ -668,7 +700,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
 # Onglet Debug
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_debug(tickers_df: pd.DataFrame, prices: dict, metadata: dict) -> None:
+def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
     st.subheader("Diagnostic colonnes")
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
@@ -706,15 +738,12 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, metadata: dict) -> None
     def _no_name(r):
         n = str(r.get("name", "") or "")
         yf = str(r.get("yf_ticker", "") or "")
-        return not n.strip() and not metadata.get(yf, {}).get("name", "")
+        return not n.strip() and not names.get(yf, "")
     st.dataframe(tickers_df.loc[tickers_df.apply(_no_name, axis=1), id_cols],
                  use_container_width=True, hide_index=True)
 
     st.subheader("Tickers sans earnings")
-    if "yf_ticker" in tickers_df.columns:
-        mask_ne = tickers_df["yf_ticker"].apply(
-            lambda t: metadata.get(str(t), {}).get("earnings") is None if pd.notna(t) else True)
-        st.dataframe(tickers_df.loc[mask_ne, id_cols], use_container_width=True, hide_index=True)
+    st.info("Les earnings sont dans le cache Beta & Earnings (bouton dédié).")
 
     st.subheader("Mapping complet gf_ticker → yf_ticker")
     st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
@@ -749,20 +778,27 @@ m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist",    len(wl_df))
 m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 
-rc1, rc2 = st.columns([1, 4])
+rc1, rc2, rc3 = st.columns([1, 1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_prices.clear(); load_tickers.clear()
-        fetch_metadata.clear(); fetch_sparklines.clear()
+        fetch_names.clear(); fetch_sparklines.clear()
         st.rerun()
 with rc2:
+    if st.button("Beta & Earnings", use_container_width=True):
+        fetch_be.clear()
+        st.rerun()
+with rc3:
     from math import ceil
     n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
     st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · "
                f"{n} paquets Yahoo · cache cours {REFRESH_TTL//60} min")
 
-with st.spinner("Métadonnées (noms, beta, earnings)…"):
-    metadata = fetch_metadata(valid_yf)
+with st.spinner("Noms des sociétés…"):
+    names = fetch_names(valid_yf)
+
+with st.spinner("Beta & Earnings…"):
+    be_data = fetch_be(valid_yf)
 
 with st.spinner("Cours en temps réel…"):
     prices = fetch_prices(valid_yf)
@@ -785,8 +821,8 @@ tab1, tab2, tab3 = st.tabs([
     "Debug",
 ])
 with tab1:
-    render_tab(pf_df, prices, metadata, sparklines, key="pf")
+    render_tab(pf_df, prices, names, be_data, sparklines, key="pf")
 with tab2:
-    render_tab(wl_df, prices, metadata, sparklines, key="wl", highlight_radar=True)
+    render_tab(wl_df, prices, names, be_data, sparklines, key="wl", highlight_radar=True)
 with tab3:
-    render_debug(tickers_df, prices, metadata)
+    render_debug(tickers_df, prices, names)
