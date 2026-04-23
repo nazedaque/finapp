@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 import openpyxl
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 
 # ══════════════════════════════════════════════════════════════════════════════
