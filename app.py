@@ -632,8 +632,8 @@ CSS = """<style>
 .wl-table tbody tr:hover td{background:#ffffff0a}
 .wl-radar td{background:#0f2920 !important}
 .wl-radar:hover td{background:#1a3d2b !important}
-.wl-flagged td{background:#1e1535 !important}
-.wl-flagged:hover td{background:#2a1d4a !important}
+.wl-flagged td{background:#2d1f5e !important}
+.wl-flagged:hover td{background:#3a2875 !important}
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
