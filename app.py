@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
 
 import openpyxl
@@ -103,6 +103,7 @@ SHEET_COL_NORMALIZED = {
     "score mixte": "score_sheet",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
+    "yf_ticker":   "yf_ticker",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
 
@@ -112,7 +113,27 @@ def _normalize_col(s: str) -> str:
     s = str(s).replace("\ufeff", "").replace("\u202f", "").replace("\xa0", "")
     nfkd = unicodedata.normalize("NFD", s)
     s = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+    s = s.replace("_", " ")
     return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def _collect_futures_map(futures: dict, empty_value):
+    results = {}
+    try:
+        for future in as_completed(futures, timeout=60):
+            try:
+                key, data = future.result(timeout=15)
+                results[key] = data
+            except Exception:
+                results[futures[future]] = empty_value() if callable(empty_value) else empty_value
+    except TimeoutError:
+        pass
+
+    for future, ticker in futures.items():
+        if ticker not in results:
+            results[ticker] = empty_value() if callable(empty_value) else empty_value
+        future.cancel()
+    return results
 
 
 def load_tickers() -> tuple[pd.DataFrame, str]:
@@ -234,12 +255,7 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
         batch = tickers[i: i + 10]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_name, t): t for t in batch}
-            for future in as_completed(futures, timeout=60):
-                try:
-                    t, name = future.result(timeout=15)
-                    names[t] = name
-                except Exception:
-                    names[futures[future]] = ""
+            names.update(_collect_futures_map(futures, ""))
         if i + 10 < len(tickers):
             time.sleep(0.2)
     return names
@@ -299,12 +315,7 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         batch = tickers[i: i + 10]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_be, t): t for t in batch}
-            for future in as_completed(futures, timeout=60):
-                try:
-                    t, data = future.result(timeout=15)
-                    results[t] = data
-                except Exception:
-                    results[futures[future]] = dict(empty)
+            results.update(_collect_futures_map(futures, lambda: dict(empty)))
         if i + 10 < len(tickers):
             time.sleep(0.2)
     return results
@@ -1030,14 +1041,20 @@ with b1:
         st.rerun()
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear(); st.rerun()
+        fetch_be.clear()
+        st.session_state["be_enabled"] = True
+        st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
     names = fetch_names(valid_yf)
 
 # ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
-be_data = fetch_be(valid_yf)   # pas de spinner : déjà en cache, quasi-instantané
+load_be_now = st.session_state.get("be_enabled", False)
+be_data = {t: {"beta": None, "earnings": None} for t in valid_yf}
+if load_be_now:
+    with st.spinner("Beta & Earnings..."):
+        be_data = fetch_be(valid_yf)
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
 with st.spinner("Cours en temps réel…"):
@@ -1121,6 +1138,7 @@ else:
 import time as _time
 
 AUTO_REFRESH_SEC = 30 * 60
+AUTO_REFRESH_JS_MS = 60_000
 
 if "next_refresh" not in st.session_state:
     st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
@@ -1133,7 +1151,27 @@ if remaining == 0:
     fetch_prices.clear()
     st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
     st.rerun()
+elif remaining <= 60:
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{
+            window.parent.location.reload();
+        }}, {remaining * 1000});
+        </script>
+        """,
+        height=0,
+    )
 else:
-    # Vérifie toutes les 60 secondes sans bloquer l'UI
-    _time.sleep(60)
-    st.rerun()
+    components.html(
+        f"""
+        <script>
+        setTimeout(function() {{
+            window.parent.location.reload();
+        }}, {AUTO_REFRESH_JS_MS});
+        </script>
+        """,
+        height=0,
+    )
+
+
