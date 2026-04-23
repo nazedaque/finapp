@@ -639,6 +639,8 @@ def export_xlsx(rows: list[dict]) -> bytes:
 CSS = """<style>
 .wl-wrap {
   overflow-x: auto;
+  max-height: 70vh;
+  overflow-y: auto;
   border-radius: 12px;
   border: 1px solid #252d3d;
   background: #141824;
@@ -952,24 +954,7 @@ div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
 .wl-stat-val.ok    { color: #22c55e; }
 .wl-stat-val.warn  { color: #fbbf24; }
 
-/* ── Alignement boutons / card stats ── */
-div[data-testid="column"]:has(div[data-testid="stVerticalBlock"] .stButton) {
-  display: flex !important;
-  flex-direction: column !important;
-}
-div[data-testid="column"]:has(.stButton) > div[data-testid="stVerticalBlock"] {
-  flex: 1 !important;
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 8px !important;
-}
-div[data-testid="column"]:has(.stButton) .stButton {
-  flex: 1 !important;
-}
-div[data-testid="column"]:has(.stButton) .stButton > button {
-  height: 100% !important;
-  min-height: 36px !important;
-}
+/* ── Boutons ── */
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
   border: none !important; border-radius: 8px !important;
