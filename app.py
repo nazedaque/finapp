@@ -111,52 +111,106 @@ def stockopedia_url(gf_ticker: str, name: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 SHEET_COL_NORMALIZED = {
-    "ticker": "gf_ticker", "societe": "name", "portif": "portif",
-    "note": "note", "buy": "buy", "fair": "fair", "trim": "trim",
-    "exit": "exit", "url": "url", "spot": "spot_sheet",
-    "score mixte": "score_sheet", "last update": "last_update",
-    "yf ticker": "yf_ticker_override",  # colonne optionnelle dans le sheet
+    "ticker":      "gf_ticker",
+    "societe":     "name",
+    "portif":      "portif",
+    "note":        "note",
+    "buy":         "buy",
+    "fair":        "fair",
+    "trim":        "trim",
+    "exit":        "exit",
+    "url":         "url",
+    "spot":        "spot_sheet",
+    "score mixte": "score_sheet",
+    "last update": "last_update",
+    "yf ticker":   "yf_ticker_override",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
+
+
+def _normalize_col(s: str) -> str:
+    """Normalisation agressive : supprime BOM, accents, espaces, casse."""
+    s = str(s).replace("\ufeff", "").replace("\u202f", "").replace("\xa0", "")
+    nfkd = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", s).strip().lower()
+
 
 @st.cache_data(ttl=SHEET_TTL, show_spinner=False)
 def load_tickers() -> tuple[pd.DataFrame, str]:
     source = "Google Sheet"
-    try:
-        df = pd.read_csv(SHEET_CSV_URL, encoding="utf-8", header=0, dtype=str)
-    except Exception:
+    df = None
+
+    # Essai 1 : Google Sheet avec utf-8-sig (gère le BOM)
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
-            df = pd.read_csv(CSV_FALLBACK, header=0, dtype=str)
+            df = pd.read_csv(SHEET_CSV_URL, encoding=enc, header=0, dtype=str)
+            if not df.empty:
+                source = "Google Sheet"
+                break
+        except Exception:
+            continue
+
+    # Essai 2 : CSV local
+    if df is None or df.empty:
+        try:
+            df = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0, dtype=str)
             source = "tickers.csv (fallback)"
         except Exception as exc:
-            raise RuntimeError(str(exc)) from exc
+            raise RuntimeError(f"Impossible de charger les données : {exc}") from exc
 
-    rename_map = {c: SHEET_COL_NORMALIZED[normalize_col(c)]
-                  for c in df.columns if normalize_col(c) in SHEET_COL_NORMALIZED}
+    # Renommage robuste avec normalisation agressive
+    rename_map: dict[str, str] = {}
+    for col in df.columns:
+        norm = _normalize_col(col)
+        if norm in SHEET_COL_NORMALIZED:
+            rename_map[col] = SHEET_COL_NORMALIZED[norm]
     df = df.rename(columns=rename_map)
-    for col in SHEET_COL_NORMALIZED.values():
-        if col not in df.columns: df[col] = pd.NA
 
+    # Colonnes manquantes → NA
+    for col in SHEET_COL_NORMALIZED.values():
+        if col not in df.columns:
+            df[col] = pd.NA
+
+    # Si gf_ticker est toujours vide, essai positionnel (col C = index 2)
+    if df["gf_ticker"].isna().all() and len(df.columns) > 2:
+        candidate = df.iloc[:, 2].dropna().astype(str)
+        # Vérifier que ça ressemble à des tickers (pas de valeurs numériques pures)
+        looks_like_tickers = candidate.str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
+        if looks_like_tickers:
+            df["gf_ticker"] = df.iloc[:, 2]
+
+    # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
-    df = df[~df["gf_ticker"].astype(str).str.strip().isin(["", "Ticker", "gf_ticker"])].copy()
+    df = df[~df["gf_ticker"].astype(str).str.strip().isin(
+        ["", "Ticker", "gf_ticker", "nan", "None"])].copy()
+
+    if df.empty:
+        raise RuntimeError(
+            f"DataFrame vide après filtrage. Colonnes trouvées : "
+            f"{[_normalize_col(c) for c in rename_map.keys() or ['(aucune)']]}. "
+            f"Colonnes brutes du CSV : voir onglet Debug."
+        )
+
     df["portif"] = df["portif"].map(
         lambda v: 1 if str(v).strip() in ("1", "TRUE", "True", "true") else 0)
     df["name"] = df["name"].apply(
         lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip())
     for col in NUMERIC_COLS:
-        if col in df.columns: df[col] = df[col].apply(parse_num)
+        if col in df.columns:
+            df[col] = df[col].apply(parse_num)
     if "last_update" in df.columns:
         df["last_update"] = pd.to_datetime(
             df["last_update"], format="%d/%m/%Y", errors="coerce").dt.date
     else:
         df["last_update"] = None
 
-    # yf_ticker : override depuis sheet si disponible, sinon conversion auto
     def resolve_yf(row) -> str | None:
         override = row.get("yf_ticker_override")
-        if override and pd.notna(override) and str(override).strip():
+        if override and pd.notna(override) and str(override).strip() not in ("", "nan"):
             return str(override).strip()
         return gf_to_yf(str(row["gf_ticker"]))
+
     df["yf_ticker"] = df.apply(resolve_yf, axis=1)
     return df.reset_index(drop=True), source
 
@@ -612,20 +666,33 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, metadata: dict,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_debug(tickers_df: pd.DataFrame, prices: dict, metadata: dict) -> None:
-    existing = list(tickers_df.columns)
+    st.subheader("Diagnostic colonnes")
+    st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
+    st.code(str(list(tickers_df.columns)))
 
-    st.subheader("Colonnes disponibles dans le DataFrame")
-    st.code(str(existing))
+    # Affichage brut CSV pour vérifier les noms originaux
+    with st.expander("Colonnes brutes du CSV (2 premières lignes)"):
+        try:
+            df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8-sig", header=0,
+                                 dtype=str, nrows=2)
+        except Exception:
+            try:
+                df_raw = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0,
+                                     dtype=str, nrows=2)
+            except Exception as e:
+                st.error(str(e)); df_raw = None
+        if df_raw is not None:
+            st.code(str(list(df_raw.columns)))
+            st.dataframe(df_raw, use_container_width=True)
 
-    id_cols = [c for c in ["gf_ticker", "yf_ticker", "name"] if c in existing]
-    if not id_cols:
-        st.warning("Colonnes de base (gf_ticker, yf_ticker, name) introuvables. "
-                   "Affichage brut du DataFrame :")
-        st.dataframe(tickers_df.head(20), use_container_width=True, hide_index=True)
+    if tickers_df.empty:
+        st.error("DataFrame vide — impossible d'afficher les diagnostics.")
         return
 
+    id_cols = [c for c in ["gf_ticker", "yf_ticker", "name"] if c in tickers_df.columns]
+
     st.subheader("Tickers sans prix Yahoo")
-    if "yf_ticker" in existing:
+    if "yf_ticker" in tickers_df.columns:
         mask = tickers_df["yf_ticker"].apply(
             lambda t: prices.get(str(t), {}).get("price") is None if pd.notna(t) else True)
         st.dataframe(tickers_df.loc[mask, id_cols], use_container_width=True, hide_index=True)
@@ -637,19 +704,18 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, metadata: dict) -> None
         n = str(r.get("name", "") or "")
         yf = str(r.get("yf_ticker", "") or "")
         return not n.strip() and not metadata.get(yf, {}).get("name", "")
-    mask_nn = tickers_df.apply(_no_name, axis=1)
-    st.dataframe(tickers_df.loc[mask_nn, id_cols], use_container_width=True, hide_index=True)
+    st.dataframe(tickers_df.loc[tickers_df.apply(_no_name, axis=1), id_cols],
+                 use_container_width=True, hide_index=True)
 
     st.subheader("Tickers sans earnings")
-    if "yf_ticker" in existing:
+    if "yf_ticker" in tickers_df.columns:
         mask_ne = tickers_df["yf_ticker"].apply(
             lambda t: metadata.get(str(t), {}).get("earnings") is None if pd.notna(t) else True)
         st.dataframe(tickers_df.loc[mask_ne, id_cols], use_container_width=True, hide_index=True)
-    else:
-        st.info("Colonne yf_ticker absente.")
 
-    st.subheader("Mapping complet")
-    st.dataframe(tickers_df[id_cols], use_container_width=True, hide_index=True, height=400)
+    st.subheader("Mapping complet gf_ticker → yf_ticker")
+    st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
+                 use_container_width=True, hide_index=True, height=400)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APP PRINCIPALE
