@@ -436,13 +436,28 @@ def fmt_beta(v) -> str:
     return f"{float(v):.2f}"
 
 def fmt_maj(maj_date, earnings_date) -> str:
-    if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)): return "—"
+    """
+    MAJ rouge si :
+    - Earnings existe ET est dans le passé ET MAJ < Earnings
+      (l'analyse précède les derniers résultats publiés → potentiellement obsolète)
+    - Pas d'Earnings ET MAJ > 30 jours
+    """
+    if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
+        return "—"
     try:
         d = maj_date if isinstance(maj_date, date) else pd.to_datetime(maj_date).date()
         s = d.strftime("%d-%m-%Y")
-        red = (d > earnings_date) if earnings_date is not None else (date.today() - d).days > 30
+        today = date.today()
+        red = False
+        if earnings_date is not None:
+            # Seulement si les earnings sont dans le passé
+            if earnings_date < today:
+                red = d < earnings_date  # analyse antérieure aux derniers résultats
+        else:
+            red = (today - d).days > 30
         return f'<span style="color:#ef4444">{s}</span>' if red else s
-    except Exception: return "—"
+    except Exception:
+        return "—"
 
 def fmt_earnings(d) -> str:
     if d is None or (isinstance(d, float) and pd.isna(d)): return "—"
@@ -485,10 +500,10 @@ def html_sparkline(closes: list[float]) -> str:
             f'stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
             f'</svg>')
 
-def html_ticker_link(gf_ticker: str, name: str) -> str:
-    url = stockopedia_url(gf_ticker, name)
+def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
+    url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
     return (f'<a href="{url}" target="_blank" rel="noopener" '
-            f'title="Ouvrir sur Stockopedia" '
+            f'title="Ouvrir sur Yahoo Finance" '
             f'style="color:#93c5fd;font-family:monospace;font-size:.8rem;'
             f'text-decoration:none">{gf_ticker}</a>')
 
@@ -563,7 +578,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             },
             # HTML
             "MAJ":      fmt_maj(r.get("last_update"), earnings),
-            "Ticker":   html_ticker_link(gf, name),
+            "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
