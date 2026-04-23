@@ -114,13 +114,11 @@ def _normalize_col(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-@st.cache_data(ttl=SHEET_TTL, show_spinner=False)
-def load_tickers(cache_bust: int = 0) -> tuple[pd.DataFrame, str]:
-    """cache_bust est un timestamp passé à l'appel pour forcer le rechargement."""
+def load_tickers() -> tuple[pd.DataFrame, str]:
+    """Toujours re-fetché depuis le sheet — pas de cache."""
     import time as _t
-    # Paramètre aléatoire pour contourner le cache CDN de Google
-    bust = cache_bust or int(_t.time())
-    url  = SHEET_CSV_URL + f"&_cb={bust}"
+    bust  = int(_t.time())
+    url   = SHEET_CSV_URL + f"&_cb={bust}"
     source = "Google Sheet"
     df = None
 
@@ -771,8 +769,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # ── 1. Sheet en premier ───────────────────────────────────────────────────────
 with st.spinner("Chargement du Google Sheet…"):
     try:
-        bust = st.session_state.get("sheet_bust", 0)
-        tickers_df, data_source = load_tickers(cache_bust=bust)
+        tickers_df, data_source = load_tickers()
     except Exception as exc:
         st.error(str(exc)); st.stop()
 
@@ -799,12 +796,9 @@ m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 rc1, rc2, rc3 = st.columns([1, 1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
-        import time as _t
-        load_tickers.clear()
         fetch_names.clear()
         fetch_prices.clear()
         fetch_sparklines.clear()
-        st.session_state["sheet_bust"] = int(_t.time())
         st.rerun()
 with rc2:
     if st.button("Beta & Earnings", use_container_width=True):
