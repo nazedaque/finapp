@@ -448,7 +448,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
                 red = d < earnings_date  # analyse antérieure aux derniers résultats
         else:
             red = (today - d).days > 30
-        return f'<span style="color:#ff3d57">{s}</span>' if red else s
+        return f'<span style="color:#ef4444">{s}</span>' if red else s
     except Exception:
         return "—"
 
@@ -461,28 +461,32 @@ def fmt_earnings(d) -> str:
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
-        return '<span style="color:#3d4d66">—</span>'
-    c = "#00e676" if chg >= 0 else "#ff3d57"
+        return '<span style="color:#4a5980">—</span>'
+    c = "#22c55e" if chg >= 0 else "#ef4444"
     a = "+" if chg >= 0 else ""
     return f'<span style="color:{c}">{a}{chg:.2f}%</span>'
 
 def html_upside(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return '<span style="color:#3d4d66">—</span>'
-    c = "#00e676" if v >= 0 else "#ff3d57"
+        return '<span style="color:#4a5980">—</span>'
+    c = "#22c55e" if v >= 0 else "#ef4444"
     a = "+" if v >= 0 else ""
     return f'<span style="color:{c};font-weight:600">{a}{v:.1f}%</span>'
 
 def html_statut(statut) -> str:
-    colors = {
-        "Strong buy": "#00e676",
-        "Buy":        "#69f0ae",
-        "Fair":       "#ffb300",
-        "Trim":       "#ff6d00",
-        "Exit":       "#ff3d57",
+    cfg = {
+        "Strong buy": ("#22c55e", "rgba(34,197,94,.15)"),
+        "Buy":        ("#86efac", "rgba(134,239,172,.12)"),
+        "Fair":       ("#fbbf24", "rgba(251,191,36,.12)"),
+        "Trim":       ("#f97316", "rgba(249,115,22,.12)"),
+        "Exit":       ("#ef4444", "rgba(239,68,68,.12)"),
     }
-    c = colors.get(statut, "#3d4d66")
-    return f'<span style="color:{c}">{statut or "—"}</span>'
+    color, bg = cfg.get(statut, ("#4a5980", "transparent"))
+    if not statut:
+        return '<span style="color:#4a5980">—</span>'
+    return (f'<span style="color:{color};background:{bg};'
+            f'padding:2px 8px;border-radius:20px;font-size:.75rem;'
+            f'font-weight:600;white-space:nowrap">{statut}</span>')
 
 def html_sparkline(closes: list[float]) -> str:
     if not closes or len(closes) < 4: return ""
@@ -494,7 +498,7 @@ def html_sparkline(closes: list[float]) -> str:
         for i, v in enumerate(closes)
     )
     up    = closes[-1] >= closes[0]
-    color = "#00e676" if up else "#ff3d57"
+    color = "#22c55e" if up else "#ef4444"
     # Zone remplie sous la courbe
     first_x = "0"
     last_x  = str(w)
@@ -510,10 +514,10 @@ def html_sparkline(closes: list[float]) -> str:
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
-    return (f'<a href="{url}" target="_blank" rel="noopener" '
-            f'title="Yahoo Finance" '
-            f'style="color:#8899bb;font-family:monospace;font-size:.78rem;'
-            f'text-decoration:none;letter-spacing:.02em">{gf_ticker}</a>')
+    return (f'<a href="{url}" target="_blank" rel="noopener" title="Yahoo Finance" '
+            f'style="color:#93c5fd;font-family:\'JetBrains Mono\',monospace;'
+            f'font-size:.78rem;font-weight:500;text-decoration:none;'
+            f'letter-spacing:.02em">{gf_ticker}</a>')
 
 def html_link(url) -> str:
     if not url or (isinstance(url, float) and pd.isna(url)): return ""
@@ -632,59 +636,42 @@ def export_xlsx(rows: list[dict]) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 
 CSS = """<style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
-
-:root {
-  --bg:      #090b0e;
-  --surface: #0d1017;
-  --border:  #1a2030;
-  --border2: #141a24;
-  --txt:     #c8d0e0;
-  --muted:   #3d4d66;
-  --dim:     #8899bb;
-  --green:   #00e676;
-  --red:     #ff3d57;
-  --amber:   #ffb300;
-  --mono:    'JetBrains Mono', 'Courier New', monospace;
-}
-
 .wl-wrap {
   overflow-x: auto;
   max-height: 70vh;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid #252d3d;
+  background: #141824;
+  box-shadow: 0 4px 24px rgba(0,0,0,.4);
 }
-
 .wl-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: var(--mono);
-  font-size: .78rem;
-  color: var(--txt);
+  font-family: 'Inter', sans-serif;
+  font-size: .82rem;
+  color: #c8d4e8;
   table-layout: fixed;
 }
-
 .wl-table thead tr { position: sticky; top: 0; z-index: 2; }
 .wl-table th {
-  background: #060809;
-  color: var(--muted);
-  font-weight: 500;
-  font-size: .68rem;
-  letter-spacing: .12em;
+  background: #0f1320;
+  color: #4a5980;
+  font-weight: 600;
+  font-size: .7rem;
+  letter-spacing: .08em;
   text-transform: uppercase;
-  padding: 8px 8px;
+  padding: 11px 10px;
   text-align: left;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #252d3d;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .wl-table th.c { text-align: center; }
-
 .wl-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border2);
+  padding: 7px 10px;
+  border-bottom: 1px solid #1a2030;
   vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -692,24 +679,20 @@ CSS = """<style>
   font-variant-numeric: tabular-nums;
 }
 .wl-table td.c { text-align: center; }
-.wl-table tbody tr:hover td { background: #ffffff05; }
-
-/* Bordure gauche statut */
-.wl-sb  td:first-child { border-left: 2px solid #00e676; }
-.wl-bu  td:first-child { border-left: 2px solid #69f0ae; }
-.wl-fa  td:first-child { border-left: 2px solid #ffb300; }
-.wl-tr  td:first-child { border-left: 2px solid #ff6d00; }
-.wl-ex  td:first-child { border-left: 2px solid #ff3d57; }
-.wl-nn  td:first-child { border-left: 2px solid transparent; }
-
-/* Surbrillances */
-.wl-radar    td { background: #001a0d !important; }
-.wl-radar:hover td { background: #002614 !important; }
-.wl-radar    td:first-child { border-left: 2px solid #00e676 !important; }
-
-.wl-flagged  td { background: #1a0d30 !important; }
-.wl-flagged:hover td { background: #221240 !important; }
-.wl-flagged  td:first-child { border-left: 2px solid #9c27b0 !important; }
+.wl-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.018); }
+.wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
+.wl-sb td:first-child { border-left: 3px solid #22c55e; }
+.wl-bu td:first-child { border-left: 3px solid #86efac; }
+.wl-fa td:first-child { border-left: 3px solid #fbbf24; }
+.wl-tr td:first-child { border-left: 3px solid #f97316; }
+.wl-ex td:first-child { border-left: 3px solid #ef4444; }
+.wl-nn td:first-child { border-left: 3px solid transparent; }
+.wl-radar td { background: rgba(34,197,94,.07) !important; }
+.wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
+.wl-radar td:first-child { border-left: 3px solid #22c55e !important; }
+.wl-flagged td { background: rgba(139,92,246,.1) !important; }
+.wl-flagged:hover td { background: rgba(139,92,246,.16) !important; }
+.wl-flagged td:first-child { border-left: 3px solid #8b5cf6 !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -887,160 +870,156 @@ m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist",    len(wl_df))
 m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 
-# Injection CSS global (fond, métriques, boutons, onglets)
+# Injection CSS global — Concept 2 : Dashboard Moderne
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Fond terminal ── */
+/* ── Fond & layout ── */
 [data-testid="stAppViewContainer"] > .main,
-[data-testid="stAppViewContainer"] { background: #090b0e !important; }
-[data-testid="stHeader"] { background: transparent !important; }
-.block-container { padding-top: 1.5rem !important; }
+[data-testid="stAppViewContainer"] { background: #0f1117 !important; }
+[data-testid="stHeader"] { background: rgba(15,17,23,.8) !important; backdrop-filter: blur(8px); }
+.block-container { padding-top: 1.8rem !important; max-width: 100% !important; }
 
-/* ── Typographie générale ── */
-html, body, [class*="css"] {
-  font-family: 'JetBrains Mono', 'Courier New', monospace !important;
-}
+/* ── Typographie ── */
+html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
-/* ── Métriques ── */
+/* ── Métriques — cards avec relief ── */
 [data-testid="metric-container"] {
-  background: #0d1017;
-  border: 1px solid #1a2030;
-  padding: 10px 16px;
-  border-radius: 0;
+  background: linear-gradient(135deg, #1a1f2e 0%, #141824 100%);
+  border: 1px solid #252d3d;
+  border-radius: 12px;
+  padding: 14px 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  transition: border-color .2s;
 }
+[data-testid="metric-container"]:hover { border-color: #3a4560; }
 [data-testid="metric-container"] label {
-  color: #3d4d66 !important;
-  font-size: .65rem !important;
+  color: #5a6a8a !important;
+  font-size: .7rem !important;
+  font-weight: 600 !important;
   text-transform: uppercase;
-  letter-spacing: .12em;
-  font-family: 'JetBrains Mono', monospace !important;
+  letter-spacing: .1em;
 }
 [data-testid="metric-container"] [data-testid="stMetricValue"] {
-  color: #c8d0e0 !important;
-  font-size: 1.2rem !important;
-  font-weight: 600;
-  font-family: 'JetBrains Mono', monospace !important;
+  color: #e2e8f4 !important;
+  font-size: 1.35rem !important;
+  font-weight: 700 !important;
 }
 
 /* ── Bouton primaire ── */
 .stButton > button[kind="primary"] {
-  background: #0d1017 !important;
-  border: 1px solid #00e676 !important;
-  border-radius: 0 !important;
-  color: #00e676 !important;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  color: #fff !important;
   font-weight: 600 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  letter-spacing: .08em !important;
-  text-transform: uppercase;
-  font-size: .72rem !important;
+  font-size: .8rem !important;
+  letter-spacing: .03em !important;
+  box-shadow: 0 2px 8px rgba(59,130,246,.4) !important;
+  transition: opacity .15s !important;
 }
-.stButton > button[kind="primary"]:hover {
-  background: #00e67615 !important;
-}
+.stButton > button[kind="primary"]:hover { opacity: .88 !important; }
 
 /* ── Bouton secondaire ── */
 .stButton > button {
-  background: #0d1017 !important;
-  border: 1px solid #1a2030 !important;
-  border-radius: 0 !important;
-  color: #3d4d66 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .72rem !important;
-  letter-spacing: .06em !important;
-  text-transform: uppercase;
+  background: #1a1f2e !important;
+  border: 1px solid #252d3d !important;
+  border-radius: 8px !important;
+  color: #8899bb !important;
+  font-size: .8rem !important;
+  font-weight: 500 !important;
+  transition: border-color .15s, color .15s !important;
 }
 .stButton > button:hover {
-  border-color: #3d4d66 !important;
-  color: #8899bb !important;
+  border-color: #3b82f6 !important;
+  color: #93c5fd !important;
 }
 
 /* ── Download button ── */
 .stDownloadButton > button {
-  background: #0d1017 !important;
-  border: 1px solid #1a2030 !important;
-  border-radius: 0 !important;
-  color: #3d4d66 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .68rem !important;
-  letter-spacing: .06em !important;
+  background: #1a1f2e !important;
+  border: 1px solid #252d3d !important;
+  border-radius: 8px !important;
+  color: #5a6a8a !important;
+  font-size: .75rem !important;
 }
+.stDownloadButton > button:hover { border-color: #3a4560 !important; color: #8899bb !important; }
 
 /* ── Onglets ── */
 .stTabs [data-baseweb="tab-list"] {
-  background: transparent;
-  border-bottom: 1px solid #1a2030;
-  gap: 0;
+  background: #141824;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 2px;
+  border: 1px solid #252d3d;
 }
 .stTabs [data-baseweb="tab"] {
   background: transparent !important;
-  border-radius: 0 !important;
-  color: #3d4d66 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .72rem !important;
-  font-weight: 500;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  padding: 8px 20px !important;
+  border-radius: 7px !important;
+  color: #5a6a8a !important;
+  font-size: .8rem !important;
+  font-weight: 500 !important;
+  padding: 6px 18px !important;
   border: none !important;
+  transition: background .15s, color .15s !important;
 }
 .stTabs [aria-selected="true"] {
-  color: #c8d0e0 !important;
-  border-bottom: 1px solid #c8d0e0 !important;
-  background: transparent !important;
+  background: #252d3d !important;
+  color: #e2e8f4 !important;
 }
 
 /* ── Champ de recherche ── */
 .stTextInput > div > div > input {
-  background: #0d1017 !important;
-  border: 1px solid #1a2030 !important;
-  border-radius: 0 !important;
-  color: #c8d0e0 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .78rem !important;
+  background: #141824 !important;
+  border: 1px solid #252d3d !important;
+  border-radius: 8px !important;
+  color: #e2e8f4 !important;
+  font-size: .82rem !important;
+  padding: 8px 12px !important;
+  transition: border-color .15s !important;
 }
 .stTextInput > div > div > input:focus {
-  border-color: #3d4d66 !important;
-  box-shadow: none !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.15) !important;
 }
 label[data-testid="stWidgetLabel"] p {
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .68rem !important;
-  color: #3d4d66 !important;
+  font-size: .72rem !important;
+  font-weight: 600 !important;
+  color: #5a6a8a !important;
   text-transform: uppercase;
-  letter-spacing: .1em;
+  letter-spacing: .07em;
 }
 
 /* ── Selectbox ── */
 .stSelectbox > div > div {
-  background: #0d1017 !important;
-  border: 1px solid #1a2030 !important;
-  border-radius: 0 !important;
-  color: #c8d0e0 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .78rem !important;
+  background: #141824 !important;
+  border: 1px solid #252d3d !important;
+  border-radius: 8px !important;
+  color: #e2e8f4 !important;
+  font-size: .82rem !important;
 }
 
 /* ── Divider ── */
-hr { border-color: #1a2030 !important; }
+hr { border-color: #1e2535 !important; }
 
-/* ── Captions & warnings ── */
-.stCaption, .stCaption p { 
-  color: #3d4d66 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: .65rem !important;
+/* ── Captions ── */
+.stCaption, .stCaption p {
+  color: #3a4560 !important;
+  font-size: .72rem !important;
 }
+
+/* ── Alertes ── */
 .stWarning {
-  background: #1a1200 !important;
-  border: 1px solid #ffb300 !important;
-  border-radius: 0 !important;
-  color: #ffb300 !important;
+  background: rgba(251,191,36,.07) !important;
+  border: 1px solid rgba(251,191,36,.3) !important;
+  border-radius: 10px !important;
+  color: #fbbf24 !important;
 }
 .stInfo {
-  background: #090b0e !important;
-  border: 1px solid #1a2030 !important;
-  border-radius: 0 !important;
+  background: rgba(59,130,246,.07) !important;
+  border: 1px solid rgba(59,130,246,.2) !important;
+  border-radius: 10px !important;
 }
 </style>
 """, unsafe_allow_html=True)
