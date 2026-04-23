@@ -864,13 +864,7 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
-# ── Métriques & boutons ───────────────────────────────────────────────────────
-m1, m2, m3 = st.columns(3)
-m1.metric("Portefeuille", len(pf_df))
-m2.metric("Watchlist",    len(wl_df))
-m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
-
-# Injection CSS global — Concept 2 : Dashboard Moderne
+# ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -878,174 +872,190 @@ st.markdown("""
 /* ── Fond & layout ── */
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
-[data-testid="stHeader"] { background: rgba(15,17,23,.8) !important; backdrop-filter: blur(8px); }
-.block-container { padding-top: 1.8rem !important; max-width: 100% !important; }
-
-/* ── Typographie ── */
+[data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
+.block-container { padding-top: 1.2rem !important; max-width: 100% !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
-/* ── Métriques — cards avec relief ── */
-[data-testid="metric-container"] {
-  background: linear-gradient(135deg, #1a1f2e 0%, #141824 100%);
+/* ── Header custom ── */
+.wl-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
-  border-radius: 12px;
-  padding: 14px 20px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.35);
-  transition: border-color .2s;
+  border-radius: 14px;
+  padding: 16px 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
-[data-testid="metric-container"]:hover { border-color: #3a4560; }
-[data-testid="metric-container"] label {
-  color: #5a6a8a !important;
-  font-size: .7rem !important;
-  font-weight: 600 !important;
+.wl-brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #e2e8f4;
+  letter-spacing: -.01em;
+}
+.wl-brand span { color: #3b82f6; }
+.wl-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  justify-content: center;
+}
+.wl-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 28px;
+}
+.wl-stat + .wl-stat {
+  border-left: 1px solid #252d3d;
+}
+.wl-stat-label {
+  font-size: .65rem;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .1em;
+  color: #4a5980;
+  margin-bottom: 3px;
 }
-[data-testid="metric-container"] [data-testid="stMetricValue"] {
-  color: #e2e8f4 !important;
-  font-size: 1.35rem !important;
-  font-weight: 700 !important;
+.wl-stat-val {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #e2e8f4;
+  font-variant-numeric: tabular-nums;
 }
+.wl-stat-val.muted { font-size: 1rem; color: #8899bb; }
+.wl-stat-val.ok    { color: #22c55e; }
+.wl-stat-val.warn  { color: #fbbf24; }
 
-/* ── Bouton primaire ── */
+/* ── Boutons ── */
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
-  border: none !important;
-  border-radius: 8px !important;
-  color: #fff !important;
-  font-weight: 600 !important;
-  font-size: .8rem !important;
-  letter-spacing: .03em !important;
+  border: none !important; border-radius: 8px !important;
+  color: #fff !important; font-weight: 600 !important;
+  font-size: .8rem !important; padding: 0 18px !important;
   box-shadow: 0 2px 8px rgba(59,130,246,.4) !important;
-  transition: opacity .15s !important;
+  white-space: nowrap !important;
 }
 .stButton > button[kind="primary"]:hover { opacity: .88 !important; }
-
-/* ── Bouton secondaire ── */
 .stButton > button {
-  background: #1a1f2e !important;
-  border: 1px solid #252d3d !important;
-  border-radius: 8px !important;
-  color: #8899bb !important;
-  font-size: .8rem !important;
-  font-weight: 500 !important;
-  transition: border-color .15s, color .15s !important;
+  background: #1a1f2e !important; border: 1px solid #252d3d !important;
+  border-radius: 8px !important; color: #8899bb !important;
+  font-size: .8rem !important; font-weight: 500 !important;
+  white-space: nowrap !important;
 }
-.stButton > button:hover {
-  border-color: #3b82f6 !important;
-  color: #93c5fd !important;
-}
+.stButton > button:hover { border-color: #3b82f6 !important; color: #93c5fd !important; }
 
-/* ── Download button ── */
+/* ── Download ── */
 .stDownloadButton > button {
-  background: #1a1f2e !important;
-  border: 1px solid #252d3d !important;
-  border-radius: 8px !important;
-  color: #5a6a8a !important;
-  font-size: .75rem !important;
+  background: #1a1f2e !important; border: 1px solid #252d3d !important;
+  border-radius: 8px !important; color: #5a6a8a !important; font-size: .75rem !important;
 }
-.stDownloadButton > button:hover { border-color: #3a4560 !important; color: #8899bb !important; }
 
 /* ── Onglets ── */
 .stTabs [data-baseweb="tab-list"] {
-  background: #141824;
-  border-radius: 10px;
-  padding: 4px;
-  gap: 2px;
+  background: #141824; border-radius: 10px; padding: 4px; gap: 2px;
   border: 1px solid #252d3d;
 }
 .stTabs [data-baseweb="tab"] {
-  background: transparent !important;
-  border-radius: 7px !important;
-  color: #5a6a8a !important;
-  font-size: .8rem !important;
-  font-weight: 500 !important;
-  padding: 6px 18px !important;
-  border: none !important;
-  transition: background .15s, color .15s !important;
+  background: transparent !important; border-radius: 7px !important;
+  color: #5a6a8a !important; font-size: .8rem !important;
+  font-weight: 500 !important; padding: 6px 18px !important; border: none !important;
 }
-.stTabs [aria-selected="true"] {
-  background: #252d3d !important;
-  color: #e2e8f4 !important;
-}
+.stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
 
-/* ── Champ de recherche ── */
+/* ── Recherche ── */
 .stTextInput > div > div > input {
-  background: #141824 !important;
-  border: 1px solid #252d3d !important;
-  border-radius: 8px !important;
-  color: #e2e8f4 !important;
-  font-size: .82rem !important;
-  padding: 8px 12px !important;
-  transition: border-color .15s !important;
+  background: #141824 !important; border: 1px solid #252d3d !important;
+  border-radius: 8px !important; color: #e2e8f4 !important;
+  font-size: .82rem !important; padding: 8px 12px !important;
 }
 .stTextInput > div > div > input:focus {
   border-color: #3b82f6 !important;
   box-shadow: 0 0 0 3px rgba(59,130,246,.15) !important;
 }
 label[data-testid="stWidgetLabel"] p {
-  font-size: .72rem !important;
-  font-weight: 600 !important;
-  color: #5a6a8a !important;
-  text-transform: uppercase;
-  letter-spacing: .07em;
+  font-size: .72rem !important; font-weight: 600 !important;
+  color: #5a6a8a !important; text-transform: uppercase; letter-spacing: .07em;
 }
 
 /* ── Selectbox ── */
 .stSelectbox > div > div {
-  background: #141824 !important;
-  border: 1px solid #252d3d !important;
-  border-radius: 8px !important;
-  color: #e2e8f4 !important;
-  font-size: .82rem !important;
+  background: #141824 !important; border: 1px solid #252d3d !important;
+  border-radius: 8px !important; color: #e2e8f4 !important; font-size: .82rem !important;
 }
 
-/* ── Divider ── */
+/* ── Misc ── */
 hr { border-color: #1e2535 !important; }
-
-/* ── Captions ── */
-.stCaption, .stCaption p {
-  color: #3a4560 !important;
-  font-size: .72rem !important;
-}
-
-/* ── Alertes ── */
+.stCaption, .stCaption p { color: #3a4560 !important; font-size: .72rem !important; }
 .stWarning {
-  background: rgba(251,191,36,.07) !important;
-  border: 1px solid rgba(251,191,36,.3) !important;
-  border-radius: 10px !important;
-  color: #fbbf24 !important;
+  background: rgba(251,191,36,.07) !important; border: 1px solid rgba(251,191,36,.3) !important;
+  border-radius: 10px !important; color: #fbbf24 !important;
 }
 .stInfo {
-  background: rgba(59,130,246,.07) !important;
-  border: 1px solid rgba(59,130,246,.2) !important;
+  background: rgba(59,130,246,.07) !important; border: 1px solid rgba(59,130,246,.2) !important;
   border-radius: 10px !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Alertes doublons ──────────────────────────────────────────────────────────
 dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
     tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
-    st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double dans le sheet : "
-               f"{', '.join(tickers_en_double)}")
+    st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
 
-rc1, rc2, rc3 = st.columns([1, 1, 4])
-with rc1:
-    if st.button("Actualiser", type="primary", use_container_width=True):
-        fetch_names.clear()
-        fetch_prices.clear()
-        fetch_sparklines.clear()
+# ── Header bar : stats + boutons ──────────────────────────────────────────────
+last_ts = st.session_state.get("last_fetch_ts", "—")
+
+# Placeholder pour stats (mise à jour après fetch des prix)
+stats_placeholder = st.empty()
+
+def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
+    ok_str   = f"{ok}/{total}" if ok is not None else "…"
+    ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
+    stats_placeholder.markdown(f"""
+<div class="wl-topbar">
+  <div class="wl-brand">📈 Watch<span>list</span></div>
+  <div class="wl-stats">
+    <div class="wl-stat">
+      <div class="wl-stat-label">Portefeuille</div>
+      <div class="wl-stat-val">{pf_count}</div>
+    </div>
+    <div class="wl-stat">
+      <div class="wl-stat-label">Watchlist</div>
+      <div class="wl-stat-val">{wl_count}</div>
+    </div>
+    <div class="wl-stat">
+      <div class="wl-stat-label">Prix récupérés</div>
+      <div class="wl-stat-val {ok_cls}">{ok_str}</div>
+    </div>
+    <div class="wl-stat">
+      <div class="wl-stat-label">Mise à jour</div>
+      <div class="wl-stat-val muted">{last_ts}</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Affichage initial (avant fetch)
+render_topbar(len(pf_df), len(wl_df), last_ts)
+
+# ── Boutons compacts ──────────────────────────────────────────────────────────
+from math import ceil
+n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+
+b1, b2, binfo = st.columns([1, 1, 5])
+with b1:
+    if st.button("🔄 Actualiser", type="primary", use_container_width=True):
+        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
-with rc2:
-    if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear()
-        st.rerun()
-with rc3:
-    from math import ceil
-    n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-    st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · "
-               f"{n} paquets Yahoo · cache {REFRESH_TTL//60} min")
+with b2:
+    if st.button("📊 Beta & Earnings", use_container_width=True):
+        fetch_be.clear(); st.rerun()
+with binfo:
+    st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · {n} paquets · cache {REFRESH_TTL//60} min")
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
@@ -1065,9 +1075,10 @@ with st.spinner("Sparklines 52 semaines…"):
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
-s1, s2, _ = st.columns(3)
-s1.metric("Prix récupérés", ok)
-s2.metric("Manquants",      len(valid_yf) - ok)
+
+# Mise à jour du topbar avec les prix récupérés
+render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
+              ok=ok, total=len(valid_yf))
 
 st.divider()
 
