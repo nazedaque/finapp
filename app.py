@@ -207,7 +207,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 
     def resolve_yf(row) -> str | None:
         override = row.get("yf_ticker_override")
-        if override and pd.notna(override) and str(override).strip() not in ("", "nan"):
+        if pd.notna(override) and str(override).strip() not in ("", "nan", "None"):
             return str(override).strip()
         return gf_to_yf(str(row["gf_ticker"]))
 
@@ -470,15 +470,18 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         q      = prices.get(yf_s, {})
         meta   = metadata.get(yf_s, {})
 
-        price  = q.get("price") or r.get("spot_sheet")
+        price  = q.get("price") or (r.get("spot_sheet") if pd.notna(r.get("spot_sheet")) else None)
         chg    = q.get("chg")
-        name   = r.get("name", "") or meta.get("name", "")
+        name   = (r.get("name") or "") if pd.notna(r.get("name")) else ""
+        name   = name or meta.get("name", "")
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
         statut  = compute_statut(price, buy, fair, trim, exit_)
         ratio   = compute_ratio(price, buy, exit_)
-        score   = compute_score(ratio, r.get("note")) or r.get("score_sheet")
+        score   = compute_score(ratio, r.get("note"))
+        if score is None and pd.notna(r.get("score_sheet")):
+            score = r.get("score_sheet")
         upside  = compute_upside(price, fair, trim)
         beta    = meta.get("beta")
         earnings = meta.get("earnings")
@@ -505,7 +508,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_radar":        radar,
             # Données brutes pour export XLS
             "_raw": {
-                "MAJ":      r.get("last_update").strftime("%d-%m-%Y") if r.get("last_update") else "",
+                "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "Ticker":   gf, "Société": name_u,
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(float(score)) if score is not None else "",
