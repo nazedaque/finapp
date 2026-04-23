@@ -24,10 +24,12 @@ SHEET_NAME    = "Travail"
 SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
                  f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}")
 CSV_FALLBACK      = "tickers.csv"
-REFRESH_TTL       = 30 * 60
+AUTO_REFRESH_SEC  = 15 * 60
+REFRESH_TTL       = AUTO_REFRESH_SEC
 SHEET_TTL         = 3_600
-META_TTL          = 86_400
-SPARK_TTL         = 86_400
+NAME_TTL          = AUTO_REFRESH_SEC
+BE_TTL            = 86_400
+SPARK_TTL         = AUTO_REFRESH_SEC
 BATCH_SIZE        = 75
 
 STATUT_ORDER = {"Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9}
@@ -246,7 +248,7 @@ def _fetch_one_name(t: str) -> tuple[str, str]:
     except Exception:
         return t, ""
 
-@st.cache_data(ttl=META_TTL, show_spinner=False)
+@st.cache_data(ttl=NAME_TTL, show_spinner=False)
 def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     import time
     names: dict[str, str] = {}
@@ -304,7 +306,7 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
         pass
     return t, result
 
-@st.cache_data(ttl=META_TTL, show_spinner=False)
+@st.cache_data(ttl=BE_TTL, show_spinner=False)
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     """Beta + Earnings — déclenchement manuel via bouton."""
     import time
@@ -733,15 +735,15 @@ def render_table(rows: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(rows: list[dict], key: str) -> None:
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        sort_choice = st.selectbox("Tri", [
-            "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
-        ], key=f"{key}_t")
-    with c2:
-        sf = st.selectbox("Statut",
-            ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
+    sf = st.radio(
+        "Statut",
+        ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"],
+        horizontal=True, key=f"{key}_f",
+    )
+    sort_choice = st.selectbox("Tri", [
+        "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
+        "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
+    ], key=f"{key}_t")
 
     if sf != "Tous":
         rows = [r for r in rows if r["_statut"] == sf]
@@ -879,10 +881,57 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
-  border-radius: 14px;
+  border-radius: 14px 0 0 14px;
   padding: 14px 24px;
   margin-bottom: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Boutons alignés exactement avec le topbar */
+div[data-testid="stHorizontalBlock"] {
+  gap: 0 !important;
+  align-items: stretch !important;
+}
+div[data-testid="stHorizontalBlock"] > div:last-child {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
+  border: 1px solid #252d3d;
+  border-left: none;
+  border-radius: 0 14px 14px 0;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.4);
+}
+
+/* ── Radio Statut horizontal ── */
+div[data-testid="stRadio"] > div {
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+div[data-testid="stRadio"] label {
+  background: #1a1f2e;
+  border: 1px solid #252d3d;
+  border-radius: 20px;
+  padding: 3px 12px;
+  font-size: .78rem !important;
+  color: #8899bb !important;
+  cursor: pointer;
+  transition: all .15s;
+}
+div[data-testid="stRadio"] label:has(input:checked) {
+  background: #252d3d;
+  border-color: #3b82f6;
+  color: #e2e8f4 !important;
+}
+div[data-testid="stRadio"] input { display: none; }
+div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+  margin: 0; font-size: .78rem;
 }
 .wl-stats {
   display: flex;
@@ -998,12 +1047,32 @@ if dupes:
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
-# Placeholder pour stats (mise à jour après fetch des prix)
-stats_placeholder = st.empty()
+# ── Header : stats + boutons sur la même ligne ───────────────────────────────
+from math import ceil
+n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+
+col_stats, col_btn = st.columns([4, 1])
+
+with col_stats:
+    stats_placeholder = st.empty()
+
+with col_btn:
+    btn_placeholder = st.empty()
+    # Les boutons sont rendus directement ici (pas besoin de placeholder)
+
+# Boutons dans la colonne droite
+with col_btn:
+    if st.button("Actualiser", use_container_width=True, key="btn_refresh"):
+        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        st.rerun()
+    if st.button("Beta & Earnings", use_container_width=True, key="btn_be"):
+        fetch_be.clear()
+        st.session_state["be_enabled"] = True
+        st.rerun()
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
-    ok_str   = f"{ok}/{total}" if ok is not None else "…"
-    ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
+    ok_str = f"{ok}/{total}" if ok is not None else "…"
+    ok_cls = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
   <div class="wl-stats">
@@ -1027,23 +1096,7 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 </div>
 """, unsafe_allow_html=True)
 
-# Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
-
-# ── Boutons compacts ──────────────────────────────────────────────────────────
-from math import ceil
-n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
-
-b1, b2 = st.columns([1, 1])
-with b1:
-    if st.button("Actualiser", use_container_width=True):
-        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
-        st.rerun()
-with b2:
-    if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear()
-        st.session_state["be_enabled"] = True
-        st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
@@ -1134,44 +1187,17 @@ else:
     with tab3:
         render_debug(tickers_df, prices, names)
 
-# ── Auto-refresh toutes les 30 minutes ───────────────────────────────────────
-import time as _time
-
-AUTO_REFRESH_SEC = 30 * 60
-AUTO_REFRESH_JS_MS = 60_000
-
-if "next_refresh" not in st.session_state:
-    st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
-
-remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
-m, s = divmod(remaining, 60)
-st.caption(f"Rafraîchissement auto dans {m}m {s:02d}s")
-
-if remaining == 0:
-    fetch_prices.clear()
-    st.session_state["next_refresh"] = _time.time() + AUTO_REFRESH_SEC
-    st.rerun()
-elif remaining <= 60:
-    components.html(
-        f"""
-        <script>
-        setTimeout(function() {{
-            window.parent.location.reload();
-        }}, {remaining * 1000});
-        </script>
-        """,
-        height=0,
-    )
-else:
-    components.html(
-        f"""
-        <script>
-        setTimeout(function() {{
-            window.parent.location.reload();
-        }}, {AUTO_REFRESH_JS_MS});
-        </script>
-        """,
-        height=0,
-    )
+# Auto-refresh complet toutes les 15 minutes
+st.caption("Rafraichissement complet auto toutes les 15 minutes")
+components.html(
+    f"""
+    <script>
+    setTimeout(function() {{
+        window.parent.location.reload();
+    }}, {AUTO_REFRESH_SEC * 1000});
+    </script>
+    """,
+    height=0,
+)
 
 
