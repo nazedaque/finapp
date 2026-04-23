@@ -448,7 +448,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
                 red = d < earnings_date  # analyse antérieure aux derniers résultats
         else:
             red = (today - d).days > 30
-        return f'<span style="color:#ef4444">{s}</span>' if red else s
+        return f'<span style="color:#ff3d57">{s}</span>' if red else s
     except Exception:
         return "—"
 
@@ -461,33 +461,28 @@ def fmt_earnings(d) -> str:
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
-        return '<span style="color:#5a6380">—</span>'
-    c = "#2dd4a0" if chg >= 0 else "#ff5f6d"
-    a = "▲" if chg >= 0 else "▼"
-    return f'<span style="color:{c};font-weight:500">{a}&nbsp;{abs(chg):.2f}%</span>'
+        return '<span style="color:#3d4d66">—</span>'
+    c = "#00e676" if chg >= 0 else "#ff3d57"
+    a = "+" if chg >= 0 else ""
+    return f'<span style="color:{c}">{a}{chg:.2f}%</span>'
 
 def html_upside(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return '<span style="color:#5a6380">—</span>'
-    c = "#2dd4a0" if v >= 0 else "#ff5f6d"
-    a = "▲" if v >= 0 else "▼"
-    return f'<span style="color:{c};font-weight:600">{a}&nbsp;{abs(v):.1f}%</span>'
+        return '<span style="color:#3d4d66">—</span>'
+    c = "#00e676" if v >= 0 else "#ff3d57"
+    a = "+" if v >= 0 else ""
+    return f'<span style="color:{c};font-weight:600">{a}{v:.1f}%</span>'
 
 def html_statut(statut) -> str:
-    # Badge avec fond teinté semi-transparent
     colors = {
-        "Strong buy": ("#2dd4a0", "#0d2e26"),
-        "Buy":        ("#86efac", "#0d2318"),
-        "Fair":       ("#f0b429", "#2a2000"),
-        "Trim":       ("#fb923c", "#2a1500"),
-        "Exit":       ("#ff5f6d", "#2a0e10"),
+        "Strong buy": "#00e676",
+        "Buy":        "#69f0ae",
+        "Fair":       "#ffb300",
+        "Trim":       "#ff6d00",
+        "Exit":       "#ff3d57",
     }
-    txt, bg = colors.get(statut, ("#5a6380", "transparent"))
-    if not statut:
-        return '<span style="color:#5a6380">—</span>'
-    return (f'<span style="color:{txt};background:{bg};'
-            f'padding:2px 7px;border-radius:20px;font-size:.72rem;'
-            f'font-weight:600;letter-spacing:.03em">{statut}</span>')
+    c = colors.get(statut, "#3d4d66")
+    return f'<span style="color:{c}">{statut or "—"}</span>'
 
 def html_sparkline(closes: list[float]) -> str:
     if not closes or len(closes) < 4: return ""
@@ -499,7 +494,7 @@ def html_sparkline(closes: list[float]) -> str:
         for i, v in enumerate(closes)
     )
     up    = closes[-1] >= closes[0]
-    color = "#2dd4a0" if up else "#ff5f6d"
+    color = "#00e676" if up else "#ff3d57"
     # Zone remplie sous la courbe
     first_x = "0"
     last_x  = str(w)
@@ -517,17 +512,15 @@ def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
     return (f'<a href="{url}" target="_blank" rel="noopener" '
             f'title="Yahoo Finance" '
-            f'style="color:#6c8eff;font-family:monospace;font-size:.8rem;'
-            f'font-weight:500;text-decoration:none;letter-spacing:.01em">'
-            f'{gf_ticker}</a>')
+            f'style="color:#8899bb;font-family:monospace;font-size:.78rem;'
+            f'text-decoration:none;letter-spacing:.02em">{gf_ticker}</a>')
 
 def html_link(url) -> str:
     if not url or (isinstance(url, float) and pd.isna(url)): return ""
     u = str(url).strip()
     if not u.startswith("http"): return ""
     return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
-            f'style="color:#6c8eff;font-size:.85rem;opacity:.7;'
-            f'text-decoration:none;transition:opacity .15s">🔗</a>')
+            f'style="color:#3d4d66;font-size:.78rem;text-decoration:none">⬡</a>')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
@@ -639,51 +632,48 @@ def export_xlsx(rows: list[dict]) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 
 CSS = """<style>
-/* ── Palette Concept 3 : Élégance Sombre ── */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --bg:        #111318;
-  --surface:   #181b23;
-  --border:    #242836;
-  --border2:   #1c2030;
-  --txt:       #dce1ec;
-  --txt-muted: #5a6380;
-  --accent:    #6c8eff;
-  --green:     #2dd4a0;
-  --red:       #ff5f6d;
-  --amber:     #f0b429;
-  --purple:    #a78bfa;
+  --bg:      #090b0e;
+  --surface: #0d1017;
+  --border:  #1a2030;
+  --border2: #141a24;
+  --txt:     #c8d0e0;
+  --muted:   #3d4d66;
+  --dim:     #8899bb;
+  --green:   #00e676;
+  --red:     #ff3d57;
+  --amber:   #ffb300;
+  --mono:    'JetBrains Mono', 'Courier New', monospace;
 }
 
-/* Wrapper */
 .wl-wrap {
   overflow-x: auto;
   max-height: 70vh;
   overflow-y: auto;
-  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 4px 24px #00000040;
 }
 
-/* Table */
 .wl-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: .81rem;
+  font-family: var(--mono);
+  font-size: .78rem;
   color: var(--txt);
   table-layout: fixed;
 }
 
-/* Header */
 .wl-table thead tr { position: sticky; top: 0; z-index: 2; }
 .wl-table th {
-  background: #13161e;
-  color: var(--txt-muted);
+  background: #060809;
+  color: var(--muted);
   font-weight: 500;
-  font-size: .73rem;
-  letter-spacing: .06em;
+  font-size: .68rem;
+  letter-spacing: .12em;
   text-transform: uppercase;
-  padding: 10px 8px;
+  padding: 8px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
@@ -692,35 +682,34 @@ CSS = """<style>
 }
 .wl-table th.c { text-align: center; }
 
-/* Cells */
 .wl-table td {
-  padding: 6px 8px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border2);
   vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background .1s;
+  font-variant-numeric: tabular-nums;
 }
 .wl-table td.c { text-align: center; }
-.wl-table tbody tr:hover td { background: #ffffff07; }
+.wl-table tbody tr:hover td { background: #ffffff05; }
 
-/* Bordure gauche colorée selon statut — injectée via classe sur <tr> */
-.wl-sb  td:first-child { border-left: 3px solid #1f8b4c; }
-.wl-bu  td:first-child { border-left: 3px solid #6dbf4b; }
-.wl-fa  td:first-child { border-left: 3px solid #d4b000; }
-.wl-tr  td:first-child { border-left: 3px solid #e67e22; }
-.wl-ex  td:first-child { border-left: 3px solid #c0392b; }
-.wl-nn  td:first-child { border-left: 3px solid transparent; }
+/* Bordure gauche statut */
+.wl-sb  td:first-child { border-left: 2px solid #00e676; }
+.wl-bu  td:first-child { border-left: 2px solid #69f0ae; }
+.wl-fa  td:first-child { border-left: 2px solid #ffb300; }
+.wl-tr  td:first-child { border-left: 2px solid #ff6d00; }
+.wl-ex  td:first-child { border-left: 2px solid #ff3d57; }
+.wl-nn  td:first-child { border-left: 2px solid transparent; }
 
-/* Surbrillances spéciales */
-.wl-radar   td { background: #0d2318 !important; }
-.wl-radar:hover td { background: #132d20 !important; }
-.wl-radar   td:first-child { border-left: 3px solid #2dd4a0 !important; }
+/* Surbrillances */
+.wl-radar    td { background: #001a0d !important; }
+.wl-radar:hover td { background: #002614 !important; }
+.wl-radar    td:first-child { border-left: 2px solid #00e676 !important; }
 
-.wl-flagged td { background: #1c1640 !important; }
-.wl-flagged:hover td { background: #251e55 !important; }
-.wl-flagged td:first-child { border-left: 3px solid #a78bfa !important; }
+.wl-flagged  td { background: #1a0d30 !important; }
+.wl-flagged:hover td { background: #221240 !important; }
+.wl-flagged  td:first-child { border-left: 2px solid #9c27b0 !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -901,103 +890,158 @@ m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 # Injection CSS global (fond, métriques, boutons, onglets)
 st.markdown("""
 <style>
-/* Fond général */
-[data-testid="stAppViewContainer"] > .main { background: #111318; }
-[data-testid="stAppViewContainer"] { background: #111318; }
-section[data-testid="stSidebar"] { background: #13161e; }
-[data-testid="stHeader"] { background: transparent; }
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* Métriques */
+/* ── Fond terminal ── */
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stAppViewContainer"] { background: #090b0e !important; }
+[data-testid="stHeader"] { background: transparent !important; }
+.block-container { padding-top: 1.5rem !important; }
+
+/* ── Typographie générale ── */
+html, body, [class*="css"] {
+  font-family: 'JetBrains Mono', 'Courier New', monospace !important;
+}
+
+/* ── Métriques ── */
 [data-testid="metric-container"] {
-  background: #181b23;
-  border: 1px solid #242836;
-  border-radius: 10px;
-  padding: 14px 18px;
+  background: #0d1017;
+  border: 1px solid #1a2030;
+  padding: 10px 16px;
+  border-radius: 0;
 }
 [data-testid="metric-container"] label {
-  color: #5a6380 !important;
-  font-size: .72rem !important;
+  color: #3d4d66 !important;
+  font-size: .65rem !important;
   text-transform: uppercase;
-  letter-spacing: .07em;
+  letter-spacing: .12em;
+  font-family: 'JetBrains Mono', monospace !important;
 }
 [data-testid="metric-container"] [data-testid="stMetricValue"] {
-  color: #dce1ec !important;
-  font-size: 1.35rem !important;
+  color: #c8d0e0 !important;
+  font-size: 1.2rem !important;
   font-weight: 600;
+  font-family: 'JetBrains Mono', monospace !important;
 }
 
-/* Bouton primaire */
+/* ── Bouton primaire ── */
 .stButton > button[kind="primary"] {
-  background: #6c8eff !important;
-  border: none !important;
-  border-radius: 8px !important;
-  color: #fff !important;
+  background: #0d1017 !important;
+  border: 1px solid #00e676 !important;
+  border-radius: 0 !important;
+  color: #00e676 !important;
   font-weight: 600 !important;
-  letter-spacing: .02em !important;
-  transition: opacity .15s !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase;
+  font-size: .72rem !important;
 }
-.stButton > button[kind="primary"]:hover { opacity: .85 !important; }
+.stButton > button[kind="primary"]:hover {
+  background: #00e67615 !important;
+}
 
-/* Bouton secondaire */
+/* ── Bouton secondaire ── */
 .stButton > button {
-  background: #181b23 !important;
-  border: 1px solid #242836 !important;
-  border-radius: 8px !important;
-  color: #9aa3bf !important;
-  font-weight: 500 !important;
+  background: #0d1017 !important;
+  border: 1px solid #1a2030 !important;
+  border-radius: 0 !important;
+  color: #3d4d66 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .72rem !important;
+  letter-spacing: .06em !important;
+  text-transform: uppercase;
 }
 .stButton > button:hover {
-  border-color: #6c8eff !important;
-  color: #6c8eff !important;
+  border-color: #3d4d66 !important;
+  color: #8899bb !important;
 }
 
-/* Onglets */
+/* ── Download button ── */
+.stDownloadButton > button {
+  background: #0d1017 !important;
+  border: 1px solid #1a2030 !important;
+  border-radius: 0 !important;
+  color: #3d4d66 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .68rem !important;
+  letter-spacing: .06em !important;
+}
+
+/* ── Onglets ── */
 .stTabs [data-baseweb="tab-list"] {
   background: transparent;
-  gap: 4px;
-  border-bottom: 1px solid #242836;
+  border-bottom: 1px solid #1a2030;
+  gap: 0;
 }
 .stTabs [data-baseweb="tab"] {
   background: transparent !important;
-  border-radius: 8px 8px 0 0 !important;
-  color: #5a6380 !important;
+  border-radius: 0 !important;
+  color: #3d4d66 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .72rem !important;
   font-weight: 500;
-  font-size: .85rem;
-  padding: 8px 18px !important;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 8px 20px !important;
   border: none !important;
 }
 .stTabs [aria-selected="true"] {
-  color: #6c8eff !important;
-  border-bottom: 2px solid #6c8eff !important;
+  color: #c8d0e0 !important;
+  border-bottom: 1px solid #c8d0e0 !important;
   background: transparent !important;
 }
 
-/* Champ de recherche */
+/* ── Champ de recherche ── */
 .stTextInput > div > div > input {
-  background: #181b23 !important;
-  border: 1px solid #242836 !important;
-  border-radius: 8px !important;
-  color: #dce1ec !important;
-  font-size: .85rem !important;
+  background: #0d1017 !important;
+  border: 1px solid #1a2030 !important;
+  border-radius: 0 !important;
+  color: #c8d0e0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .78rem !important;
 }
 .stTextInput > div > div > input:focus {
-  border-color: #6c8eff !important;
-  box-shadow: 0 0 0 2px #6c8eff22 !important;
+  border-color: #3d4d66 !important;
+  box-shadow: none !important;
+}
+label[data-testid="stWidgetLabel"] p {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .68rem !important;
+  color: #3d4d66 !important;
+  text-transform: uppercase;
+  letter-spacing: .1em;
 }
 
-/* Selectbox */
+/* ── Selectbox ── */
 .stSelectbox > div > div {
-  background: #181b23 !important;
-  border: 1px solid #242836 !important;
-  border-radius: 8px !important;
-  color: #dce1ec !important;
+  background: #0d1017 !important;
+  border: 1px solid #1a2030 !important;
+  border-radius: 0 !important;
+  color: #c8d0e0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .78rem !important;
 }
 
-/* Divider */
-hr { border-color: #242836 !important; }
+/* ── Divider ── */
+hr { border-color: #1a2030 !important; }
 
-/* Captions */
-.stCaption { color: #5a6380 !important; }
+/* ── Captions & warnings ── */
+.stCaption, .stCaption p { 
+  color: #3d4d66 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: .65rem !important;
+}
+.stWarning {
+  background: #1a1200 !important;
+  border: 1px solid #ffb300 !important;
+  border-radius: 0 !important;
+  color: #ffb300 !important;
+}
+.stInfo {
+  background: #090b0e !important;
+  border: 1px solid #1a2030 !important;
+  border-radius: 0 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
