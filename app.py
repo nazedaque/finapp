@@ -27,9 +27,9 @@ CSV_FALLBACK      = "tickers.csv"
 AUTO_REFRESH_SEC  = 15 * 60
 REFRESH_TTL       = AUTO_REFRESH_SEC
 SHEET_TTL         = 3_600
-NAME_TTL          = AUTO_REFRESH_SEC
+NAME_TTL          = 7 * 86_400
 BE_TTL            = 86_400
-SPARK_TTL         = AUTO_REFRESH_SEC
+SPARK_TTL         = 6 * 3_600
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
@@ -230,6 +230,9 @@ def _fetch_one_name(t: str) -> tuple[str, str]:
         return t, ""
 
 @st.cache_data(ttl=NAME_TTL, show_spinner=False)
+def fetch_name_cached(ticker: str) -> str:
+    return _fetch_one_name(ticker)[1]
+
 def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     import time
     names: dict[str, str] = {}
@@ -238,11 +241,11 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     for i in range(0, len(tickers), YF_META_BATCH_SIZE):
         batch = tickers[i: i + YF_META_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(_fetch_one_name, t): t for t in batch}
+            futures = {executor.submit(fetch_name_cached, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
                 try:
-                    t, name = future.result(timeout=15)
-                    names[t] = name
+                    t = futures[future]
+                    names[t] = future.result(timeout=15)
                 except Exception:
                     names[futures[future]] = ""
         if i + YF_META_BATCH_SIZE < len(tickers):
@@ -250,50 +253,110 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     return names
 
 
+def _coerce_date(value):
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date"):
+        try:
+            return value.date()
+        except Exception:
+            return None
+    if isinstance(value, (list, tuple, set)):
+        dates = [_coerce_date(v) for v in value]
+        dates = [d for d in dates if d is not None]
+        return min(dates) if dates else None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc).date()
+        except Exception:
+            return None
+    if isinstance(value, str):
+        s = value.strip()
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(s[:10], fmt).date()
+            except Exception:
+                continue
+    return None
+
+
+def _extract_earnings_from_calendar(cal):
+    if cal is None:
+        return None
+    if isinstance(cal, dict):
+        for key in ("Earnings Date", "EarningsDate"):
+            if key in cal:
+                return _coerce_date(cal.get(key))
+        return None
+    if hasattr(cal, "loc"):
+        for key in ("Earnings Date", "EarningsDate"):
+            try:
+                return _coerce_date(cal.loc[key].iloc[0])
+            except Exception:
+                continue
+    return None
+
+
 def _fetch_one_be(t: str) -> tuple[str, dict]:
     """Récupère beta + earnings — plus lent, via .info et .calendar."""
-    result: dict = {"beta": None, "earnings": None}
+    result: dict = {"beta": None, "earnings": None, "_diag": []}
     try:
         tk = yf.Ticker(t)
+        info = {}
         try:
             info = tk.info or {}
             b = info.get("beta")
+            if b is None:
+                b = info.get("beta3Year")
             if b is not None:
                 result["beta"] = float(b)
+                result["_diag"].append("beta:info")
+            else:
+                result["_diag"].append("beta:missing")
         except Exception:
-            pass
+            result["_diag"].append("beta:info_error")
         try:
-            cal = tk.calendar
-            if cal is not None:
-                if isinstance(cal, dict):
-                    raw = cal.get("Earnings Date")
-                    if raw is not None:
-                        dates = raw if isinstance(raw, list) else [raw]
-                        parsed = []
-                        for d in dates:
-                            try:
-                                if hasattr(d, "date"): d = d.date()
-                                elif isinstance(d, str):
-                                    d = datetime.strptime(d[:10], "%Y-%m-%d").date()
-                                parsed.append(d)
-                            except Exception:
-                                pass
-                        if parsed:
-                            result["earnings"] = min(parsed)
-                elif hasattr(cal, "loc"):
-                    try:
-                        d = cal.loc["Earnings Date"].iloc[0]
-                        if hasattr(d, "date"): d = d.date()
-                        result["earnings"] = d
-                    except Exception:
-                        pass
+            result["earnings"] = _extract_earnings_from_calendar(tk.calendar)
+            if result["earnings"] is not None:
+                result["_diag"].append("earnings:calendar")
         except Exception:
-            pass
+            result["_diag"].append("earnings:calendar_error")
+
+        if result["earnings"] is None:
+            try:
+                for key in ("earningsTimestamp", "earningsDate",
+                            "earningsTimestampStart", "earningsTimestampEnd"):
+                    parsed = _coerce_date(info.get(key))
+                    if parsed is not None:
+                        result["earnings"] = parsed
+                        result["_diag"].append(f"earnings:info:{key}")
+                        break
+            except Exception:
+                result["_diag"].append("earnings:info_error")
+
+        if result["earnings"] is None:
+            try:
+                earn_df = tk.get_earnings_dates(limit=4)
+                if earn_df is not None and len(earn_df.index) > 0:
+                    parsed = _coerce_date(list(earn_df.index))
+                    if parsed is not None:
+                        result["earnings"] = parsed
+                        result["_diag"].append("earnings:get_earnings_dates")
+            except Exception:
+                result["_diag"].append("earnings:get_earnings_dates_error")
+
+        if result["earnings"] is None:
+            result["_diag"].append("earnings:missing")
     except Exception:
-        pass
+        result["_diag"].append("ticker:init_error")
     return t, result
 
 @st.cache_data(ttl=BE_TTL, show_spinner=False)
+def fetch_be_cached(ticker: str) -> dict:
+    return _fetch_one_be(ticker)[1]
+
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     """Beta + Earnings — déclenchement manuel via bouton."""
     import time
@@ -303,15 +366,25 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     for i in range(0, len(tickers), YF_META_BATCH_SIZE):
         batch = tickers[i: i + YF_META_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(_fetch_one_be, t): t for t in batch}
+            futures = {executor.submit(fetch_be_cached, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
                 try:
-                    t, data = future.result(timeout=15)
-                    results[t] = data
+                    t = futures[future]
+                    results[t] = future.result(timeout=15)
                 except Exception:
                     results[futures[future]] = dict(empty)
         if i + YF_META_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
+    st.session_state["be_debug"] = [
+        {
+            "ticker": t,
+            "beta": data.get("beta"),
+            "earnings": data.get("earnings"),
+            "diag": ", ".join(data.get("_diag", [])),
+        }
+        for t, data in results.items()
+        if data.get("beta") is None or data.get("earnings") is None
+    ]
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -789,7 +862,7 @@ def render_tab(rows: list[dict], key: str) -> None:
 # Onglet Debug
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
+def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: dict) -> None:
     st.subheader("Diagnostic colonnes")
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
@@ -832,7 +905,27 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
                  use_container_width=True, hide_index=True)
 
     st.subheader("Tickers sans earnings")
-    st.info("Les earnings sont dans le cache Beta & Earnings (bouton dédié).")
+    missing_earnings = []
+    for _, row in tickers_df.iterrows():
+        yf = str(row.get("yf_ticker", "") or "")
+        data = be_data.get(yf, {})
+        if yf and data.get("earnings") is None:
+            missing_earnings.append({
+                "yf_ticker": yf,
+                "name": row.get("name", ""),
+                "beta": data.get("beta"),
+            })
+    if missing_earnings:
+        st.dataframe(pd.DataFrame(missing_earnings), use_container_width=True, hide_index=True)
+    else:
+        st.success("Aucun ticker sans earnings dans les données chargées.")
+
+    be_debug = st.session_state.get("be_debug", [])
+    if be_debug:
+        st.subheader("Diagnostic Beta & Earnings")
+        st.dataframe(pd.DataFrame(be_debug), use_container_width=True, hide_index=True)
+    else:
+        st.info("Charge Beta & Earnings pour voir les diagnostics détaillés.")
 
     st.subheader("Mapping complet gf_ticker → yf_ticker")
     st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
@@ -1040,11 +1133,11 @@ n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 b1, b2 = st.columns([1, 1])
 with b1:
     if st.button("Actualiser", use_container_width=True):
-        fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        fetch_name_cached.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
-        fetch_be.clear()
+        fetch_be_cached.clear()
         st.session_state["be_enabled"] = True
         st.rerun()
 
@@ -1135,7 +1228,7 @@ else:
     with tab2:
         render_tab(rows_wl, key="wl")
     with tab3:
-        render_debug(tickers_df, prices, names)
+        render_debug(tickers_df, prices, names, be_data)
 
 components.html(
     f"""
