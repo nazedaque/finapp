@@ -661,6 +661,16 @@ with st.spinner("Chargement de la liste de titres…"):
     except Exception as exc:
         st.error(str(exc)); st.stop()
 
+if tickers_df.empty:
+    st.error("Le DataFrame est vide après chargement. Voici les colonnes brutes du sheet :")
+    try:
+        df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8", header=0, dtype=str, nrows=3)
+    except Exception:
+        df_raw = pd.read_csv(CSV_FALLBACK, header=0, dtype=str, nrows=3)
+    st.code(str(list(df_raw.columns)))
+    st.dataframe(df_raw, use_container_width=True)
+    st.stop()
+
 pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
