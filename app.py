@@ -194,6 +194,11 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             ~df["yf_ticker"].astype(str).str.strip().isin(["", "nan", "None"]),
             other=df["gf_ticker"].astype(str)
         )
+
+    # Détection des doublons
+    dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
+    st.session_state["ticker_dupes"] = dupes.to_dict("records") if not dupes.empty else []
+
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -652,23 +657,22 @@ def render_table(rows: list[dict]) -> None:
 
 def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
                be_data: dict, sparklines: dict, key: str,
-               highlight_radar: bool = False) -> None:
+               highlight_radar: bool = False,
+               global_search: str = "") -> None:
     rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
 
-    c1, c2, c3 = st.columns([2, 1, 1])
+    c1, c2 = st.columns([1, 1])
     with c1:
-        search = st.text_input("Recherche", key=f"{key}_s", placeholder="Ticker ou société…")
-    with c2:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
             "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
         ], key=f"{key}_t")
-    with c3:
+    with c2:
         sf = st.selectbox("Statut",
             ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
 
-    if search:
-        q = search.lower()
+    if global_search:
+        q = global_search.lower()
         rows = [r for r in rows if q in r["_ticker"].lower() or q in r["_name"].lower()]
     if sf != "Tous":
         rows = [r for r in rows if r["_statut"] == sf]
@@ -793,6 +797,12 @@ m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist",    len(wl_df))
 m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 
+dupes = st.session_state.get("ticker_dupes", [])
+if dupes:
+    tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
+    st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double dans le sheet : "
+               f"{', '.join(tickers_en_double)}")
+
 rc1, rc2, rc3 = st.columns([1, 1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
@@ -814,9 +824,8 @@ with rc3:
 with st.spinner("Noms des sociétés…"):
     names = fetch_names(valid_yf)
 
-# ── 3. Beta & Earnings (Yahoo, lent — cache 24h) ──────────────────────────────
-with st.spinner("Beta & Earnings…"):
-    be_data = fetch_be(valid_yf)
+# ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
+be_data = fetch_be(valid_yf)   # pas de spinner : déjà en cache, quasi-instantané
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
 with st.spinner("Cours en temps réel…"):
@@ -835,15 +844,42 @@ s2.metric("Manquants",      len(valid_yf) - ok)
 
 st.divider()
 
+# ── Recherche globale (Portefeuille + Watchlist) ───────────────────────────────
+st.markdown("""
+<script>
+(function() {
+    function attachSelectAll() {
+        document.querySelectorAll('input[type="text"]').forEach(function(el) {
+            if (!el.dataset.selectAllBound) {
+                el.addEventListener('focus', function() { this.select(); });
+                el.dataset.selectAllBound = '1';
+            }
+        });
+    }
+    // Attache au chargement et après chaque rendu React
+    attachSelectAll();
+    new MutationObserver(attachSelectAll).observe(document.body, {childList: true, subtree: true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
+global_search = st.text_input(
+    "Recherche globale",
+    placeholder="Ticker ou société… (cherche dans Portefeuille ET Watchlist)",
+    key="global_search",
+)
+
 tab1, tab2, tab3 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
     f"Watchlist ({len(wl_df)})",
     "Debug",
 ])
 with tab1:
-    render_tab(pf_df, prices, names, be_data, sparklines, key="pf")
+    render_tab(pf_df, prices, names, be_data, sparklines, key="pf",
+               global_search=global_search)
 with tab2:
-    render_tab(wl_df, prices, names, be_data, sparklines, key="wl", highlight_radar=True)
+    render_tab(wl_df, prices, names, be_data, sparklines, key="wl",
+               highlight_radar=True, global_search=global_search)
 with tab3:
     render_debug(tickers_df, prices, names)
 
