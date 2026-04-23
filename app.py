@@ -682,18 +682,10 @@ CSS = """<style>
 .wl-table td.c { text-align: center; }
 .wl-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.018); }
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
-.wl-sb td:first-child { border-left: 3px solid #22c55e; }
-.wl-bu td:first-child { border-left: 3px solid #86efac; }
-.wl-fa td:first-child { border-left: 3px solid #fbbf24; }
-.wl-tr td:first-child { border-left: 3px solid #f97316; }
-.wl-ex td:first-child { border-left: 3px solid #ef4444; }
-.wl-nn td:first-child { border-left: 3px solid transparent; }
 .wl-radar td { background: rgba(34,197,94,.07) !important; }
 .wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
-.wl-radar td:first-child { border-left: 3px solid #22c55e !important; }
 .wl-flagged td { background: rgba(139,92,246,.1) !important; }
 .wl-flagged:hover td { background: rgba(139,92,246,.16) !important; }
-.wl-flagged td:first-child { border-left: 3px solid #8b5cf6 !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -705,10 +697,6 @@ def render_table(rows: list[dict]) -> None:
         f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>'
         for c in DISPLAY_COLS
     )
-    STATUT_CLS = {
-        "Strong buy": "wl-sb", "Buy": "wl-bu", "Fair": "wl-fa",
-        "Trim": "wl-tr", "Exit": "wl-ex", "": "wl-nn",
-    }
     trs = []
     for r in rows:
         if r["_flagged"]:
@@ -716,7 +704,7 @@ def render_table(rows: list[dict]) -> None:
         elif r["_radar"]:
             cls = "wl-radar"
         else:
-            cls = STATUT_CLS.get(r["_statut"], "wl-nn")
+            cls = ""
         tds = "".join(
             f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
             for c in DISPLAY_COLS
@@ -739,7 +727,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
                global_search: str = "") -> None:
     rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
 
-    c1, c2, c3 = st.columns([2, 1, 1])
+    c1, c2 = st.columns([2, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
@@ -770,19 +758,15 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    # Export XLS sur la même ligne que Tri/Statut
-    with c3:
-        if rows:
-            xls_bytes = export_xlsx(rows)
-            st.download_button(
-                "Export Excel", data=xls_bytes,
-                file_name=f"watchlist_{key}_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"{key}_xls",
-                use_container_width=True,
-            )
-        else:
-            st.write("")
+    # Export XLS
+    if rows:
+        xls_bytes = export_xlsx(rows)
+        st.download_button(
+            "Export Excel", data=xls_bytes,
+            file_name=f"watchlist_{key}_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key}_xls",
+        )
 
     render_table(rows)
 
@@ -1043,7 +1027,7 @@ render_topbar(len(pf_df), len(wl_df), last_ts)
 from math import ceil
 n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 
-b1, b2, binfo = st.columns([1, 1, 5])
+b1, b2 = st.columns([1, 1])
 with b1:
     if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
@@ -1051,8 +1035,6 @@ with b1:
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
         fetch_be.clear(); st.rerun()
-with binfo:
-    st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · {n} paquets · cache {REFRESH_TTL//60} min")
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
@@ -1102,7 +1084,7 @@ components.html("""
 
 global_search = st.text_input(
     "Recherche",
-    placeholder="Ticker ou société… (cherche dans Portefeuille ET Watchlist)",
+    placeholder="Ticker ou société…",
     key="global_search",
     label_visibility="collapsed",
 )
