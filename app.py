@@ -1087,6 +1087,20 @@ tab1, tab2, tab3 = st.tabs([
     f"Watchlist ({len(wl_df)})",
     "Debug",
 ])
+
+# Pré-calculer les rows des deux onglets pour la recherche globale
+# (indépendamment de l'onglet actif)
+rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
+rows_wl = build_rows(wl_df, prices, names, be_data, sparklines, True)
+
+if global_search:
+    q = global_search.lower()
+    rows_pf = [r for r in rows_pf if q in r["_ticker"].lower() or q in r["_name"].lower()]
+    rows_wl = [r for r in rows_wl if q in r["_ticker"].lower() or q in r["_name"].lower()]
+
+st.session_state["export_rows_pf"] = rows_pf
+st.session_state["export_rows_wl"] = rows_wl
+
 with tab1:
     render_tab(pf_df, prices, names, be_data, sparklines, key="pf",
                global_search=global_search)
@@ -1107,24 +1121,24 @@ if "next_refresh" not in st.session_state:
 remaining = max(0, int(st.session_state["next_refresh"] - _time.time()))
 m, s = divmod(remaining, 60)
 
-# Rangée du bas : caption à gauche, export à droite
-bot1, bot2 = st.columns([4, 1])
+# Rangée du bas : caption à gauche, export à droite (70% + 30%)
+bot1, bot2 = st.columns([7, 3])
 with bot1:
     st.caption(f"Prochain rafraîchissement automatique dans {m}m {s:02d}s")
 with bot2:
-    # Export de l'onglet actif (pf en priorité, wl sinon)
-    rows_pf = st.session_state.get("export_rows_pf", [])
-    rows_wl = st.session_state.get("export_rows_wl", [])
-    # On exporte les deux onglets concaténés
-    all_rows = rows_pf + rows_wl
+    all_rows = st.session_state.get("export_rows_pf", []) + \
+               st.session_state.get("export_rows_wl", [])
     if all_rows:
         xls_bytes = export_xlsx(all_rows)
-        st.download_button(
-            "Export Excel", data=xls_bytes,
-            file_name=f"watchlist_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="export_global", use_container_width=True,
-        )
+        # Colonne intérieure pour réduire la largeur à ~70% de bot2
+        _, inner = st.columns([3, 7])
+        with inner:
+            st.download_button(
+                "Export Excel", data=xls_bytes,
+                file_name=f"watchlist_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="export_global", use_container_width=True,
+            )
 
 if remaining == 0:
     fetch_prices.clear()
