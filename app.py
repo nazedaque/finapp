@@ -461,51 +461,73 @@ def fmt_earnings(d) -> str:
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
-        return '<span style="color:#64748b">—</span>'
-    c = "#22c55e" if chg >= 0 else "#ef4444"
+        return '<span style="color:#5a6380">—</span>'
+    c = "#2dd4a0" if chg >= 0 else "#ff5f6d"
     a = "▲" if chg >= 0 else "▼"
-    return f'<span style="color:{c}">{a}&nbsp;{abs(chg):.2f}%</span>'
+    return f'<span style="color:{c};font-weight:500">{a}&nbsp;{abs(chg):.2f}%</span>'
 
 def html_upside(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return '<span style="color:#64748b">—</span>'
-    c = "#22c55e" if v >= 0 else "#ef4444"
+        return '<span style="color:#5a6380">—</span>'
+    c = "#2dd4a0" if v >= 0 else "#ff5f6d"
     a = "▲" if v >= 0 else "▼"
     return f'<span style="color:{c};font-weight:600">{a}&nbsp;{abs(v):.1f}%</span>'
 
 def html_statut(statut) -> str:
-    c = STATUT_COLOR.get(statut, "#64748b")
-    return f'<span style="color:{c};font-weight:600">{statut or "—"}</span>'
+    # Badge avec fond teinté semi-transparent
+    colors = {
+        "Strong buy": ("#2dd4a0", "#0d2e26"),
+        "Buy":        ("#86efac", "#0d2318"),
+        "Fair":       ("#f0b429", "#2a2000"),
+        "Trim":       ("#fb923c", "#2a1500"),
+        "Exit":       ("#ff5f6d", "#2a0e10"),
+    }
+    txt, bg = colors.get(statut, ("#5a6380", "transparent"))
+    if not statut:
+        return '<span style="color:#5a6380">—</span>'
+    return (f'<span style="color:{txt};background:{bg};'
+            f'padding:2px 7px;border-radius:20px;font-size:.72rem;'
+            f'font-weight:600;letter-spacing:.03em">{statut}</span>')
 
 def html_sparkline(closes: list[float]) -> str:
-    if not closes or len(closes) < 4: return "—"
+    if not closes or len(closes) < 4: return ""
     mn, mx = min(closes), max(closes)
-    if mx == mn: return "—"
-    w, h = 84, 26
+    if mx == mn: return ""
+    w, h = 84, 24
     pts = " ".join(
-        f"{i / (len(closes) - 1) * w:.1f},{h - (v - mn) / (mx - mn) * h:.1f}"
+        f"{i / (len(closes) - 1) * w:.1f},{h - (v - mn) / (mx - mn) * (h - 4) - 2:.1f}"
         for i, v in enumerate(closes)
     )
-    color = "#22c55e" if closes[-1] >= closes[0] else "#ef4444"
-    return (f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
-            f'style="display:inline-block;vertical-align:middle">'
-            f'<polyline points="{pts}" fill="none" stroke="{color}" '
-            f'stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
-            f'</svg>')
+    up    = closes[-1] >= closes[0]
+    color = "#2dd4a0" if up else "#ff5f6d"
+    # Zone remplie sous la courbe
+    first_x = "0"
+    last_x  = str(w)
+    fill_pts = f"0,{h} {pts} {last_x},{h}"
+    return (
+        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+        f'style="display:inline-block;vertical-align:middle;opacity:.9">'
+        f'<polygon points="{fill_pts}" fill="{color}" fill-opacity=".12"/>'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" '
+        f'stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'</svg>'
+    )
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
     return (f'<a href="{url}" target="_blank" rel="noopener" '
-            f'title="Ouvrir sur Yahoo Finance" '
-            f'style="color:#93c5fd;font-family:monospace;font-size:.8rem;'
-            f'text-decoration:none">{gf_ticker}</a>')
+            f'title="Yahoo Finance" '
+            f'style="color:#6c8eff;font-family:monospace;font-size:.8rem;'
+            f'font-weight:500;text-decoration:none;letter-spacing:.01em">'
+            f'{gf_ticker}</a>')
 
 def html_link(url) -> str:
     if not url or (isinstance(url, float) and pd.isna(url)): return ""
     u = str(url).strip()
     if not u.startswith("http"): return ""
     return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
-            f'style="color:#7dd3fc;font-size:.85rem;text-decoration:none">🔗</a>')
+            f'style="color:#6c8eff;font-size:.85rem;opacity:.7;'
+            f'text-decoration:none;transition:opacity .15s">🔗</a>')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
@@ -617,23 +639,88 @@ def export_xlsx(rows: list[dict]) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 
 CSS = """<style>
-.wl-wrap{overflow-x:auto;max-height:70vh;overflow-y:auto;
-  border-radius:8px;border:1px solid #1e293b}
-.wl-table{width:100%;border-collapse:collapse;font-size:.82rem;
-  color:#e2e8f0;table-layout:fixed}
-.wl-table thead tr{position:sticky;top:0;z-index:2}
-.wl-table th{background:#0f172a;color:#94a3b8;font-weight:600;
-  padding:9px 8px;text-align:left;border-bottom:2px solid #334155;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wl-table th.c{text-align:center}
-.wl-table td{padding:5px 8px;border-bottom:1px solid #1a2035;
-  vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wl-table td.c{text-align:center}
-.wl-table tbody tr:hover td{background:#ffffff0a}
-.wl-radar td{background:#0f2920 !important}
-.wl-radar:hover td{background:#1a3d2b !important}
-.wl-flagged td{background:#2d1f5e !important}
-.wl-flagged:hover td{background:#3a2875 !important}
+/* ── Palette Concept 3 : Élégance Sombre ── */
+:root {
+  --bg:        #111318;
+  --surface:   #181b23;
+  --border:    #242836;
+  --border2:   #1c2030;
+  --txt:       #dce1ec;
+  --txt-muted: #5a6380;
+  --accent:    #6c8eff;
+  --green:     #2dd4a0;
+  --red:       #ff5f6d;
+  --amber:     #f0b429;
+  --purple:    #a78bfa;
+}
+
+/* Wrapper */
+.wl-wrap {
+  overflow-x: auto;
+  max-height: 70vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 4px 24px #00000040;
+}
+
+/* Table */
+.wl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .81rem;
+  color: var(--txt);
+  table-layout: fixed;
+}
+
+/* Header */
+.wl-table thead tr { position: sticky; top: 0; z-index: 2; }
+.wl-table th {
+  background: #13161e;
+  color: var(--txt-muted);
+  font-weight: 500;
+  font-size: .73rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wl-table th.c { text-align: center; }
+
+/* Cells */
+.wl-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border2);
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background .1s;
+}
+.wl-table td.c { text-align: center; }
+.wl-table tbody tr:hover td { background: #ffffff07; }
+
+/* Bordure gauche colorée selon statut — injectée via classe sur <tr> */
+.wl-sb  td:first-child { border-left: 3px solid #1f8b4c; }
+.wl-bu  td:first-child { border-left: 3px solid #6dbf4b; }
+.wl-fa  td:first-child { border-left: 3px solid #d4b000; }
+.wl-tr  td:first-child { border-left: 3px solid #e67e22; }
+.wl-ex  td:first-child { border-left: 3px solid #c0392b; }
+.wl-nn  td:first-child { border-left: 3px solid transparent; }
+
+/* Surbrillances spéciales */
+.wl-radar   td { background: #0d2318 !important; }
+.wl-radar:hover td { background: #132d20 !important; }
+.wl-radar   td:first-child { border-left: 3px solid #2dd4a0 !important; }
+
+.wl-flagged td { background: #1c1640 !important; }
+.wl-flagged:hover td { background: #251e55 !important; }
+.wl-flagged td:first-child { border-left: 3px solid #a78bfa !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -645,19 +732,23 @@ def render_table(rows: list[dict]) -> None:
         f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>'
         for c in DISPLAY_COLS
     )
+    STATUT_CLS = {
+        "Strong buy": "wl-sb", "Buy": "wl-bu", "Fair": "wl-fa",
+        "Trim": "wl-tr", "Exit": "wl-ex", "": "wl-nn",
+    }
     trs = []
     for r in rows:
         if r["_flagged"]:
-            cls = ' class="wl-flagged"'
+            cls = "wl-flagged"
         elif r["_radar"]:
-            cls = ' class="wl-radar"'
+            cls = "wl-radar"
         else:
-            cls = ""
+            cls = STATUT_CLS.get(r["_statut"], "wl-nn")
         tds = "".join(
-            f'<td class="{"c" if c in CENTER else ("" if c != "Société" else "")}">'
-            f'{r[c]}</td>' for c in DISPLAY_COLS
+            f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
+            for c in DISPLAY_COLS
         )
-        trs.append(f"<tr{cls}>{tds}</tr>")
+        trs.append(f'<tr class="{cls}">{tds}</tr>')
     st.markdown(
         CSS + f'<div class="wl-wrap"><table class="wl-table">'
         f'{colgroup}<thead><tr>{th}</tr></thead>'
@@ -806,6 +897,109 @@ m1, m2, m3 = st.columns(3)
 m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist",    len(wl_df))
 m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
+
+# Injection CSS global (fond, métriques, boutons, onglets)
+st.markdown("""
+<style>
+/* Fond général */
+[data-testid="stAppViewContainer"] > .main { background: #111318; }
+[data-testid="stAppViewContainer"] { background: #111318; }
+section[data-testid="stSidebar"] { background: #13161e; }
+[data-testid="stHeader"] { background: transparent; }
+
+/* Métriques */
+[data-testid="metric-container"] {
+  background: #181b23;
+  border: 1px solid #242836;
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+[data-testid="metric-container"] label {
+  color: #5a6380 !important;
+  font-size: .72rem !important;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+  color: #dce1ec !important;
+  font-size: 1.35rem !important;
+  font-weight: 600;
+}
+
+/* Bouton primaire */
+.stButton > button[kind="primary"] {
+  background: #6c8eff !important;
+  border: none !important;
+  border-radius: 8px !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  letter-spacing: .02em !important;
+  transition: opacity .15s !important;
+}
+.stButton > button[kind="primary"]:hover { opacity: .85 !important; }
+
+/* Bouton secondaire */
+.stButton > button {
+  background: #181b23 !important;
+  border: 1px solid #242836 !important;
+  border-radius: 8px !important;
+  color: #9aa3bf !important;
+  font-weight: 500 !important;
+}
+.stButton > button:hover {
+  border-color: #6c8eff !important;
+  color: #6c8eff !important;
+}
+
+/* Onglets */
+.stTabs [data-baseweb="tab-list"] {
+  background: transparent;
+  gap: 4px;
+  border-bottom: 1px solid #242836;
+}
+.stTabs [data-baseweb="tab"] {
+  background: transparent !important;
+  border-radius: 8px 8px 0 0 !important;
+  color: #5a6380 !important;
+  font-weight: 500;
+  font-size: .85rem;
+  padding: 8px 18px !important;
+  border: none !important;
+}
+.stTabs [aria-selected="true"] {
+  color: #6c8eff !important;
+  border-bottom: 2px solid #6c8eff !important;
+  background: transparent !important;
+}
+
+/* Champ de recherche */
+.stTextInput > div > div > input {
+  background: #181b23 !important;
+  border: 1px solid #242836 !important;
+  border-radius: 8px !important;
+  color: #dce1ec !important;
+  font-size: .85rem !important;
+}
+.stTextInput > div > div > input:focus {
+  border-color: #6c8eff !important;
+  box-shadow: 0 0 0 2px #6c8eff22 !important;
+}
+
+/* Selectbox */
+.stSelectbox > div > div {
+  background: #181b23 !important;
+  border: 1px solid #242836 !important;
+  border-radius: 8px !important;
+  color: #dce1ec !important;
+}
+
+/* Divider */
+hr { border-color: #242836 !important; }
+
+/* Captions */
+.stCaption { color: #5a6380 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
