@@ -761,7 +761,12 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # APP PRINCIPALE
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.spinner("Chargement de la liste de titres…"):
+# ══════════════════════════════════════════════════════════════════════════════
+# APP PRINCIPALE
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Sheet en premier ───────────────────────────────────────────────────────
+with st.spinner("Chargement du Google Sheet…"):
     try:
         tickers_df, data_source = load_tickers()
     except Exception as exc:
@@ -781,6 +786,7 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
+# ── Métriques & boutons ───────────────────────────────────────────────────────
 m1, m2, m3 = st.columns(3)
 m1.metric("Portefeuille", len(pf_df))
 m2.metric("Watchlist",    len(wl_df))
@@ -789,8 +795,11 @@ m3.metric("Dernière MAJ", st.session_state.get("last_fetch_ts", "—"))
 rc1, rc2, rc3 = st.columns([1, 1, 4])
 with rc1:
     if st.button("Actualiser", type="primary", use_container_width=True):
-        fetch_prices.clear(); load_tickers.clear()
-        fetch_names.clear(); fetch_sparklines.clear()
+        # Ordre explicite : sheet d'abord, Yahoo ensuite
+        load_tickers.clear()      # 1. Sheet
+        fetch_names.clear()       # 2. Noms
+        fetch_prices.clear()      # 3. Cours
+        fetch_sparklines.clear()  # 4. Sparklines
         st.rerun()
 with rc2:
     if st.button("Beta & Earnings", use_container_width=True):
@@ -800,17 +809,21 @@ with rc3:
     from math import ceil
     n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
     st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · "
-               f"{n} paquets Yahoo · cache cours {REFRESH_TTL//60} min")
+               f"{n} paquets Yahoo · cache {REFRESH_TTL//60} min")
 
+# ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 with st.spinner("Noms des sociétés…"):
     names = fetch_names(valid_yf)
 
+# ── 3. Beta & Earnings (Yahoo, lent — cache 24h) ──────────────────────────────
 with st.spinner("Beta & Earnings…"):
     be_data = fetch_be(valid_yf)
 
+# ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
 with st.spinner("Cours en temps réel…"):
     prices = fetch_prices(valid_yf)
 
+# ── 5. Sparklines (Yahoo, cache 24h) ─────────────────────────────────────────
 with st.spinner("Sparklines 52 semaines…"):
     sparklines = fetch_sparklines(valid_yf)
 
