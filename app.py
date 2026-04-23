@@ -845,23 +845,29 @@ s2.metric("Manquants",      len(valid_yf) - ok)
 st.divider()
 
 # ── Recherche globale (Portefeuille + Watchlist) ───────────────────────────────
-st.markdown("""
+import streamlit.components.v1 as components
+
+# Auto-sélection du texte dans tous les champs texte
+components.html("""
 <script>
 (function() {
     function attachSelectAll() {
-        document.querySelectorAll('input[type="text"]').forEach(function(el) {
-            if (!el.dataset.selectAllBound) {
+        var inputs = window.parent.document.querySelectorAll('input[type="text"]');
+        inputs.forEach(function(el) {
+            if (!el.dataset.sa) {
                 el.addEventListener('focus', function() { this.select(); });
-                el.dataset.selectAllBound = '1';
+                el.dataset.sa = '1';
             }
         });
     }
-    // Attache au chargement et après chaque rendu React
     attachSelectAll();
-    new MutationObserver(attachSelectAll).observe(document.body, {childList: true, subtree: true});
+    new MutationObserver(attachSelectAll).observe(
+        window.parent.document.body,
+        {childList: true, subtree: true}
+    );
 })();
 </script>
-""", unsafe_allow_html=True)
+""", height=0)
 
 global_search = st.text_input(
     "Recherche globale",
