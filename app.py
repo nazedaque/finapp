@@ -722,8 +722,7 @@ def render_table(rows: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(rows: list[dict], key: str) -> None:
-    """Reçoit les rows déjà filtrés/construits, gère uniquement tri + affichage."""
-    c1, c2 = st.columns([2, 1])
+    c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
@@ -751,24 +750,26 @@ def render_tab(rows: list[dict], key: str) -> None:
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    # Export Excel — entre les contrôles et le tableau
-    if rows:
-        xls_bytes = export_xlsx(rows)
-        st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
-        st.download_button(
-            "Export Excel", data=xls_bytes,
-            file_name=f"watchlist_{key}_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"{key}_xls",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
     render_table(rows)
 
     missing = [r["_ticker"] for r in rows if not r["_price_ok"]]
     if missing:
         with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
             st.write(", ".join(missing))
+
+    # Export Excel — sous le tableau, aligné à droite, avec espacement
+    if rows:
+        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
+        _, right = st.columns([3, 1])
+        with right:
+            xls_bytes = export_xlsx(rows)
+            st.download_button(
+                "Export Excel", data=xls_bytes,
+                file_name=f"watchlist_{key}_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"{key}_xls",
+                use_container_width=True,
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Onglet Debug
