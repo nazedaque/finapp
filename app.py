@@ -16,7 +16,7 @@ import yfinance as yf
 # Config
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.set_page_config(page_title="Watchlist", page_icon="📈", layout="wide",
+st.set_page_config(page_title="Watchlist", page_icon=None, layout="wide",
                    initial_sidebar_state="collapsed")
 
 SHEET_ID      = "1KQ0eolfB-UH-N-jQo2WDxsmVNT3I4IhiTEbdIfcPvbA"
@@ -43,18 +43,18 @@ STATUT_COLOR = {
 DISPLAY_COLS = [
     "MAJ", "Ticker", "Société", "Prix", "Var %", "Upside", "Spark",
     "Score", "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-    "Statut", "Earnings", "🔗",
+    "Statut", "Earnings", "↗",
 ]
 COL_WIDTHS = {
     "MAJ": "92px", "Ticker": "82px", "Société": "210px",
     "Prix": "78px", "Var %": "80px", "Upside": "72px", "Spark": "88px",
     "Score": "52px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
     "Qualité": "58px", "Beta": "56px", "Statut": "90px",
-    "Earnings": "98px", "🔗": "44px",
+    "Earnings": "98px", "↗": "36px",
 }
 CENTER = {"MAJ", "Prix", "Var %", "Upside", "Spark", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-          "Statut", "Earnings", "🔗"}
+          "Statut", "Earnings", "↗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -524,7 +524,8 @@ def html_link(url) -> str:
     u = str(url).strip()
     if not u.startswith("http"): return ""
     return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
-            f'style="color:#3d4d66;font-size:.78rem;text-decoration:none">⬡</a>')
+            f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
+            f'text-decoration:none;font-family:monospace">↗</a>')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
@@ -606,7 +607,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Beta":     fmt_beta(beta),
             "Statut":   html_statut(statut),
             "Earnings": fmt_earnings(earnings),
-            "🔗":       html_link(r.get("url")),
+            "↗":        html_link(r.get("url")),
         })
     return rows
 
@@ -738,7 +739,7 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
                global_search: str = "") -> None:
     rows = build_rows(df_sub, prices, names, be_data, sparklines, highlight_radar)
 
-    c1, c2 = st.columns([1, 1])
+    c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
             "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
@@ -769,15 +770,19 @@ def render_tab(df_sub: pd.DataFrame, prices: dict, names: dict,
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    # Export XLS
-    if rows:
-        xls_bytes = export_xlsx(rows)
-        st.download_button(
-            "⬇ Export Excel", data=xls_bytes,
-            file_name=f"watchlist_{key}_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"{key}_xls",
-        )
+    # Export XLS sur la même ligne que Tri/Statut
+    with c3:
+        if rows:
+            xls_bytes = export_xlsx(rows)
+            st.download_button(
+                "Export Excel", data=xls_bytes,
+                file_name=f"watchlist_{key}_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"{key}_xls",
+                use_container_width=True,
+            )
+        else:
+            st.write("")
 
     render_table(rows)
 
@@ -873,28 +878,21 @@ st.markdown("""
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
-.block-container { padding-top: 1.2rem !important; max-width: 100% !important; }
+.block-container { padding-top: 3rem !important; max-width: 100% !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
 /* ── Header custom ── */
 .wl-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
   border-radius: 14px;
-  padding: 16px 24px;
-  margin-bottom: 16px;
+  padding: 14px 24px;
+  margin-bottom: 12px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
-.wl-brand {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: #e2e8f4;
-  letter-spacing: -.01em;
-}
-.wl-brand span { color: #3b82f6; }
 .wl-stats {
   display: flex;
   align-items: center;
@@ -1017,7 +1015,6 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
     ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
-  <div class="wl-brand">📈 Watch<span>list</span></div>
   <div class="wl-stats">
     <div class="wl-stat">
       <div class="wl-stat-label">Portefeuille</div>
@@ -1048,11 +1045,11 @@ n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 
 b1, b2, binfo = st.columns([1, 1, 5])
 with b1:
-    if st.button("🔄 Actualiser", type="primary", use_container_width=True):
+    if st.button("Actualiser", type="primary", use_container_width=True):
         fetch_names.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
-    if st.button("📊 Beta & Earnings", use_container_width=True):
+    if st.button("Beta & Earnings", use_container_width=True):
         fetch_be.clear(); st.rerun()
 with binfo:
     st.caption(f"Source : **{data_source}** · {len(valid_yf)} tickers · {n} paquets · cache {REFRESH_TTL//60} min")
@@ -1080,9 +1077,7 @@ ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
 render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
               ok=ok, total=len(valid_yf))
 
-st.divider()
-
-# ── Recherche globale (Portefeuille + Watchlist) ───────────────────────────────
+# ── Recherche globale ──────────────────────────────────────────────────────────
 # Auto-sélection du texte dans tous les champs texte
 components.html("""
 <script>
@@ -1106,9 +1101,10 @@ components.html("""
 """, height=0)
 
 global_search = st.text_input(
-    "Recherche globale",
+    "Recherche",
     placeholder="Ticker ou société… (cherche dans Portefeuille ET Watchlist)",
     key="global_search",
+    label_visibility="collapsed",
 )
 
 tab1, tab2, tab3 = st.tabs([
