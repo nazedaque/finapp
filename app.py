@@ -30,7 +30,9 @@ SHEET_TTL         = 3_600
 NAME_TTL          = AUTO_REFRESH_SEC
 BE_TTL            = 86_400
 SPARK_TTL         = AUTO_REFRESH_SEC
-BATCH_SIZE        = 75
+BATCH_SIZE        = 50
+YF_META_BATCH_SIZE = 10
+YF_BATCH_PAUSE_SEC = 0.2
 
 STATUT_ORDER = {"Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9}
 STATUT_COLOR = {
@@ -232,8 +234,9 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     import time
     names: dict[str, str] = {}
     tickers = list(yf_tickers)
-    for i in range(0, len(tickers), 10):
-        batch = tickers[i: i + 10]
+    # Requetes unitaires Yahoo : petits batches + courte pause pour limiter la pression.
+    for i in range(0, len(tickers), YF_META_BATCH_SIZE):
+        batch = tickers[i: i + YF_META_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_name, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
@@ -242,8 +245,8 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
                     names[t] = name
                 except Exception:
                     names[futures[future]] = ""
-        if i + 10 < len(tickers):
-            time.sleep(0.2)
+        if i + YF_META_BATCH_SIZE < len(tickers):
+            time.sleep(YF_BATCH_PAUSE_SEC)
     return names
 
 
@@ -297,8 +300,8 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     results: dict[str, dict] = {}
     empty = {"beta": None, "earnings": None}
     tickers = list(yf_tickers)
-    for i in range(0, len(tickers), 10):
-        batch = tickers[i: i + 10]
+    for i in range(0, len(tickers), YF_META_BATCH_SIZE):
+        batch = tickers[i: i + YF_META_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_fetch_one_be, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
@@ -307,8 +310,8 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
                     results[t] = data
                 except Exception:
                     results[futures[future]] = dict(empty)
-        if i + 10 < len(tickers):
-            time.sleep(0.2)
+        if i + YF_META_BATCH_SIZE < len(tickers):
+            time.sleep(YF_BATCH_PAUSE_SEC)
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -338,8 +341,11 @@ def _price_chg(closes):
 
 @st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
 def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
+    import time
     results: dict[str, dict] = {}
-    for batch in _chunked(list(yf_tickers), BATCH_SIZE):
+    tickers = list(yf_tickers)
+    # Requetes mutualisees Yahoo : batches plus gros, mais on garde une pause courte.
+    for i, batch in enumerate(_chunked(tickers, BATCH_SIZE)):
         try:
             data = yf.download(tickers=" ".join(batch), period="5d", interval="30m",
                                auto_adjust=False, progress=False, group_by="ticker",
@@ -351,6 +357,8 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         for t in batch:
             price, chg = _price_chg(_closes(data, t, multi))
             results[t] = {"price": price, "chg": chg}
+        if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
+            time.sleep(YF_BATCH_PAUSE_SEC)
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -359,8 +367,10 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
 
 @st.cache_data(ttl=SPARK_TTL, show_spinner=False)
 def fetch_sparklines(yf_tickers: tuple[str, ...]) -> dict[str, list[float]]:
+    import time
     result: dict[str, list[float]] = {}
-    for batch in _chunked(list(yf_tickers), BATCH_SIZE):
+    tickers = list(yf_tickers)
+    for i, batch in enumerate(_chunked(tickers, BATCH_SIZE)):
         try:
             data = yf.download(tickers=" ".join(batch), period="1y", interval="1wk",
                                auto_adjust=True, progress=False, group_by="ticker",
@@ -376,6 +386,8 @@ def fetch_sparklines(yf_tickers: tuple[str, ...]) -> dict[str, list[float]]:
                     pass
         except Exception:
             pass
+        if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
+            time.sleep(YF_BATCH_PAUSE_SEC)
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1125,8 +1137,6 @@ else:
     with tab3:
         render_debug(tickers_df, prices, names)
 
-# Auto-refresh complet toutes les 15 minutes
-st.caption("Rafraichissement complet auto toutes les 15 minutes")
 components.html(
     f"""
     <script>
