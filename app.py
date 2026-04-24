@@ -1178,26 +1178,47 @@ with b2:
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 last_action = st.session_state.pop("last_action", "")
-if last_action == "be":
+data_key = valid_yf
+same_data_key = st.session_state.get("data_key") == data_key
+
+if same_data_key and last_action != "refresh" and "names_data" in st.session_state:
+    names = st.session_state["names_data"]
+elif last_action == "be":
     names = fetch_names(valid_yf)
+    st.session_state["names_data"] = names
 else:
     with st.spinner("Noms des sociétés…"):
         names = fetch_names(valid_yf)
+    st.session_state["names_data"] = names
 
 # ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
 load_be_now = st.session_state.get("be_enabled", False)
 be_data = {t: {"beta": None, "earnings": None} for t in valid_yf}
 if load_be_now:
-    with st.spinner("Beta & Earnings..."):
-        be_data = fetch_be(valid_yf)
+    if same_data_key and last_action != "be" and "be_data_cache" in st.session_state:
+        be_data = st.session_state["be_data_cache"]
+    else:
+        with st.spinner("Beta & Earnings..."):
+            be_data = fetch_be(valid_yf)
+        st.session_state["be_data_cache"] = be_data
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
-with st.spinner("Cours en temps réel…"):
-    prices = fetch_prices(valid_yf)
+if same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
+    prices = st.session_state["prices_data"]
+else:
+    with st.spinner("Cours en temps réel…"):
+        prices = fetch_prices(valid_yf)
+    st.session_state["prices_data"] = prices
 
 # ── 5. Sparklines (Yahoo, cache 24h) ─────────────────────────────────────────
-with st.spinner("Sparklines 52 semaines…"):
-    sparklines = fetch_sparklines(valid_yf)
+if same_data_key and last_action != "refresh" and "sparklines_data" in st.session_state:
+    sparklines = st.session_state["sparklines_data"]
+else:
+    with st.spinner("Sparklines 52 semaines…"):
+        sparklines = fetch_sparklines(valid_yf)
+    st.session_state["sparklines_data"] = sparklines
+
+st.session_state["data_key"] = data_key
 
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
