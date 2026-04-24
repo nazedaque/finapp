@@ -891,63 +891,46 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
         st.error("DataFrame vide — impossible d'afficher les diagnostics.")
         return
 
-    id_cols = [c for c in ["gf_ticker", "yf_ticker", "name"] if c in tickers_df.columns]
-
-    st.subheader("Tickers sans prix Yahoo")
-    if "yf_ticker" in tickers_df.columns:
-        mask = tickers_df["yf_ticker"].apply(
-            lambda t: prices.get(str(t), {}).get("price") is None if pd.notna(t) else True)
-        st.dataframe(tickers_df.loc[mask, id_cols], use_container_width=True, hide_index=True)
-    else:
-        st.info("Colonne yf_ticker absente.")
-
-    st.subheader("Tickers sans nom")
-    def _no_name(r):
-        n = str(r.get("name", "") or "")
-        yf = str(r.get("yf_ticker", "") or "")
-        return not n.strip() and not names.get(yf, "")
-    st.dataframe(tickers_df.loc[tickers_df.apply(_no_name, axis=1), id_cols],
-                 use_container_width=True, hide_index=True)
-
-    st.subheader("Tickers sans earnings")
-    missing_earnings = []
+    st.subheader("Diagnostic logique MAJ / Earnings")
+    debug_rows = []
+    today = date.today()
     for _, row in tickers_df.iterrows():
         yf = str(row.get("yf_ticker", "") or "")
         data = be_data.get(yf, {})
-        if yf and data.get("earnings") is None:
-            missing_earnings.append({
-                "yf_ticker": yf,
-                "name": row.get("name", ""),
-                "beta": data.get("beta"),
-            })
-    if missing_earnings:
-        st.dataframe(pd.DataFrame(missing_earnings), use_container_width=True, hide_index=True)
-    else:
-        st.success("Aucun ticker sans earnings dans les données chargées.")
+        maj_raw = row.get("last_update")
+        earnings_raw = data.get("earnings")
 
-    be_debug = st.session_state.get("be_debug", [])
-    if be_debug:
-        st.subheader("Diagnostic Beta & Earnings")
-        st.dataframe(pd.DataFrame(be_debug), use_container_width=True, hide_index=True)
-    else:
-        st.info("Charge Beta & Earnings pour voir les diagnostics détaillés.")
+        maj_date = None
+        earnings_date = None
+        try:
+            if pd.notna(maj_raw) and maj_raw:
+                maj_date = maj_raw if isinstance(maj_raw, date) else pd.to_datetime(maj_raw).date()
+        except Exception:
+            pass
+        try:
+            if earnings_raw is not None and not (isinstance(earnings_raw, float) and pd.isna(earnings_raw)):
+                earnings_date = earnings_raw if isinstance(earnings_raw, date) else pd.to_datetime(earnings_raw).date()
+        except Exception:
+            pass
 
-    if be_data:
-        beta_fields_rows = []
-        for yf, data in list(be_data.items())[:10]:
-            raw = data.get("_beta_fields", {}) or {}
-            beta_fields_rows.append({
-                "yf_ticker": yf,
-                "beta": raw.get("beta"),
-                "beta_final": data.get("beta"),
-            })
-        if beta_fields_rows:
-            st.subheader("Aperçu des champs beta*")
-            st.dataframe(pd.DataFrame(beta_fields_rows), use_container_width=True, hide_index=True)
+        older_than_30 = (today - maj_date).days > 30 if maj_date is not None else False
+        maj_gt_earnings = (maj_date > earnings_date) if (maj_date is not None and earnings_date is not None) else False
+        maj_red = older_than_30 or maj_gt_earnings
 
-    st.subheader("Mapping complet gf_ticker → yf_ticker")
-    st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
-                 use_container_width=True, hide_index=True, height=400)
+        debug_rows.append({
+            "gf_ticker": row.get("gf_ticker", ""),
+            "yf_ticker": yf,
+            "name": row.get("name", ""),
+            "MAJ_raw": maj_raw,
+            "MAJ_date": maj_date,
+            "Earnings_raw": earnings_raw,
+            "Earnings_date": earnings_date,
+            "older_than_30": older_than_30,
+            "maj_gt_earnings": maj_gt_earnings,
+            "maj_red": maj_red,
+        })
+
+    st.dataframe(pd.DataFrame(debug_rows), use_container_width=True, hide_index=True, height=500)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APP PRINCIPALE
