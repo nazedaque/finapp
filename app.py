@@ -1258,6 +1258,9 @@ components.html("""
 if "search_input" not in st.session_state:
     st.session_state["search_input"] = st.session_state.get("global_search", "")
 
+def clear_search() -> None:
+    st.session_state["search_input"] = ""
+
 search_col, clear_col = st.columns([12, 1])
 with search_col:
     global_search = st.text_input(
@@ -1267,9 +1270,7 @@ with search_col:
         label_visibility="collapsed",
     )
 with clear_col:
-    if st.button("Clear", key="clear_search", use_container_width=True):
-        st.session_state["search_input"] = ""
-        st.rerun()
+    st.button("Clear", key="clear_search", use_container_width=True, on_click=clear_search)
 
 st.session_state["global_search"] = global_search
 
