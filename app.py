@@ -1160,10 +1160,12 @@ n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 b1, b2 = st.columns([1, 1])
 with b1:
     if st.button("Actualiser", use_container_width=True):
+        st.session_state["last_action"] = "refresh"
         fetch_name_cached.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
+        st.session_state["last_action"] = "be"
         fetch_be_cached.clear()
         st.session_state["be_enabled"] = True
         st.query_params["be"] = "1"
@@ -1175,8 +1177,12 @@ with b2:
         st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
-with st.spinner("Noms des sociétés…"):
+last_action = st.session_state.pop("last_action", "")
+if last_action == "be":
     names = fetch_names(valid_yf)
+else:
+    with st.spinner("Noms des sociétés…"):
+        names = fetch_names(valid_yf)
 
 # ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
 load_be_now = st.session_state.get("be_enabled", False)
