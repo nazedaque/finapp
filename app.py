@@ -1187,7 +1187,8 @@ elif last_action == "be":
     names = fetch_names(valid_yf)
     st.session_state["names_data"] = names
 else:
-    with st.spinner("Noms des sociétés…"):
+    names_spinner = "Actualisation des noms des sociétés…" if last_action == "refresh" else "Noms des sociétés…"
+    with st.spinner(names_spinner):
         names = fetch_names(valid_yf)
     st.session_state["names_data"] = names
 
@@ -1198,7 +1199,8 @@ if load_be_now:
     if same_data_key and last_action != "be" and "be_data_cache" in st.session_state:
         be_data = st.session_state["be_data_cache"]
     else:
-        with st.spinner("Beta & Earnings..."):
+        be_spinner = "Actualisation Beta & Earnings..." if last_action == "be" else "Beta & Earnings..."
+        with st.spinner(be_spinner):
             be_data = fetch_be(valid_yf)
         st.session_state["be_data_cache"] = be_data
 
@@ -1206,7 +1208,8 @@ if load_be_now:
 if same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
     prices = st.session_state["prices_data"]
 else:
-    with st.spinner("Cours en temps réel…"):
+    prices_spinner = "Actualisation des cours en temps réel…" if last_action == "refresh" else "Cours en temps réel…"
+    with st.spinner(prices_spinner):
         prices = fetch_prices(valid_yf)
     st.session_state["prices_data"] = prices
 
@@ -1214,7 +1217,8 @@ else:
 if same_data_key and last_action != "refresh" and "sparklines_data" in st.session_state:
     sparklines = st.session_state["sparklines_data"]
 else:
-    with st.spinner("Sparklines 52 semaines…"):
+    spark_spinner = "Actualisation des sparklines 52 semaines…" if last_action == "refresh" else "Sparklines 52 semaines…"
+    with st.spinner(spark_spinner):
         sparklines = fetch_sparklines(valid_yf)
     st.session_state["sparklines_data"] = sparklines
 
@@ -1251,12 +1255,18 @@ components.html("""
 </script>
 """, height=0)
 
-global_search = st.text_input(
-    "Recherche",
-    placeholder="Ticker ou société…",
-    key="global_search",
-    label_visibility="collapsed",
-)
+search_col, clear_col = st.columns([12, 1])
+with search_col:
+    global_search = st.text_input(
+        "Recherche",
+        placeholder="Ticker ou société…",
+        key="global_search",
+        label_visibility="collapsed",
+    )
+with clear_col:
+    if st.button("Clear", key="clear_search", use_container_width=True):
+        st.session_state["global_search"] = ""
+        st.rerun()
 
 # Construire les rows des deux onglets une seule fois
 rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
