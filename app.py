@@ -299,6 +299,14 @@ def _extract_earnings_from_calendar(cal):
     return None
 
 
+def _pick_earnings_dates(candidates: list[date]) -> tuple[date | None, date | None]:
+    today = date.today()
+    clean = sorted({d for d in candidates if isinstance(d, date)})
+    last_earnings = max((d for d in clean if d < today), default=None)
+    next_earnings = min((d for d in clean if d >= today), default=None)
+    return next_earnings, last_earnings
+
+
 def _fetch_one_be(t: str) -> tuple[str, dict]:
     """Récupère beta + earnings — plus lent, via .info et .calendar."""
     result: dict = {"beta": None, "earnings": None, "_diag": []}
@@ -956,6 +964,25 @@ pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
 valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
 
+components.html("""
+<script>
+(function() {
+    const key = "watchlist_be_enabled";
+    const value = window.localStorage.getItem(key);
+    if (value === "1") {
+        const url = new URL(window.parent.location.href);
+        if (url.searchParams.get("be") !== "1") {
+            url.searchParams.set("be", "1");
+            window.parent.location.replace(url.toString());
+        }
+    }
+})();
+</script>
+""", height=0)
+
+if st.query_params.get("be") == "1":
+    st.session_state["be_enabled"] = True
+
 # ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
 <style>
@@ -1139,6 +1166,12 @@ with b2:
     if st.button("Beta & Earnings", use_container_width=True):
         fetch_be_cached.clear()
         st.session_state["be_enabled"] = True
+        st.query_params["be"] = "1"
+        components.html("""
+        <script>
+        window.localStorage.setItem("watchlist_be_enabled", "1");
+        </script>
+        """, height=0)
         st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
