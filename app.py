@@ -12,9 +12,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Config
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 st.set_page_config(page_title="Watchlist", page_icon=None, layout="wide",
                    initial_sidebar_state="collapsed")
@@ -40,29 +40,29 @@ STATUT_COLOR = {
     "Trim": "#e67e22",       "Exit": "#c0392b", "": "#64748b",
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Colonnes & layout — identiques entre onglets
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Colonnes & layout â€” identiques entre onglets
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 DISPLAY_COLS = [
-    "MAJ", "Ticker", "Société", "Prix", "Var %", "Upside", "Spark",
-    "Score", "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-    "Statut", "Earnings", "↗",
+    "MAJ", "Ticker", "SociÃ©tÃ©", "Prix", "Var %", "Upside", "Spark",
+    "Score", "Buy", "Fair", "Trim", "Exit", "QualitÃ©", "Beta",
+    "Statut", "Earnings", "â†—",
 ]
 COL_WIDTHS = {
-    "MAJ": "92px", "Ticker": "82px", "Société": "210px",
+    "MAJ": "92px", "Ticker": "82px", "SociÃ©tÃ©": "210px",
     "Prix": "78px", "Var %": "80px", "Upside": "72px", "Spark": "88px",
     "Score": "52px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
-    "Qualité": "58px", "Beta": "56px", "Statut": "90px",
-    "Earnings": "98px", "↗": "36px",
+    "QualitÃ©": "58px", "Beta": "56px", "Statut": "90px",
+    "Earnings": "98px", "â†—": "36px",
 }
 CENTER = {"MAJ", "Prix", "Var %", "Upside", "Spark", "Score",
-          "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-          "Statut", "Earnings", "↗"}
+          "Buy", "Fair", "Trim", "Exit", "QualitÃ©", "Beta",
+          "Statut", "Earnings", "â†—"}
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Utilitaires
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def normalize_col(s: str) -> str:
     nfkd = unicodedata.normalize("NFD", str(s))
@@ -71,7 +71,7 @@ def normalize_col(s: str) -> str:
 def parse_num(v) -> float | None:
     if v is None: return None
     s = str(v).strip().replace("\u202f", "").replace("\xa0", "").replace(" ", "")
-    if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""): return None
+    if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "â€”", ""): return None
     if re.match(r"^\d{1,3}(,\d{3})+$", s): return float(s.replace(",", ""))
     if re.match(r"^\d{1,3}(,\d{3})+,\d{1,2}$", s):
         parts = s.split(","); return float("".join(parts[:-1]) + "." + parts[-1])
@@ -89,9 +89,9 @@ def stockopedia_url(gf_ticker: str, name: str) -> str:
     sym = gf_ticker.split(":")[-1]
     return f"https://www.stockopedia.com/search/?q={sym}"
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Chargement du sheet
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 SHEET_COL_NORMALIZED = {
     "ticker":      "gf_ticker",
@@ -120,7 +120,7 @@ def _normalize_col(s: str) -> str:
 
 
 def load_tickers() -> tuple[pd.DataFrame, str]:
-    """Toujours re-fetché depuis le sheet — pas de cache."""
+    """Toujours re-fetchÃ© depuis le sheet â€” pas de cache."""
     import time as _t
     bust  = int(_t.time())
     url   = SHEET_CSV_URL + f"&_cb={bust}"
@@ -141,7 +141,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             df = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0, dtype=str)
             source = "tickers.csv (fallback)"
         except Exception as exc:
-            raise RuntimeError(f"Impossible de charger les données : {exc}") from exc
+            raise RuntimeError(f"Impossible de charger les donnÃ©es : {exc}") from exc
 
     # Renommage robuste avec normalisation agressive
     rename_map: dict[str, str] = {}
@@ -151,7 +151,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             rename_map[col] = SHEET_COL_NORMALIZED[norm]
     df = df.rename(columns=rename_map)
 
-    # Colonnes manquantes → NA
+    # Colonnes manquantes â†’ NA
     for col in SHEET_COL_NORMALIZED.values():
         if col not in df.columns:
             df[col] = pd.NA
@@ -159,12 +159,12 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     # Si gf_ticker est toujours vide, essai positionnel (col C = index 2)
     if df["gf_ticker"].isna().all() and len(df.columns) > 2:
         candidate = df.iloc[:, 2].dropna().astype(str)
-        # Vérifier que ça ressemble à des tickers (pas de valeurs numériques pures)
+        # VÃ©rifier que Ã§a ressemble Ã  des tickers (pas de valeurs numÃ©riques pures)
         looks_like_tickers = candidate.str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
-    # Colonne A = case à cocher (TRUE/FALSE) — lue par position avant tout renommage
+    # Colonne A = case Ã  cocher (TRUE/FALSE) â€” lue par position avant tout renommage
     df["flagged"] = df.iloc[:, 0].apply(
         lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
     )
@@ -176,7 +176,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 
     if df.empty:
         raise RuntimeError(
-            f"DataFrame vide après filtrage. Colonnes trouvées : "
+            f"DataFrame vide aprÃ¨s filtrage. Colonnes trouvÃ©es : "
             f"{[_normalize_col(c) for c in rename_map.keys() or ['(aucune)']]}. "
             f"Colonnes brutes du CSV : voir onglet Debug."
         )
@@ -195,7 +195,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         df["last_update"] = None
 
     # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
-    # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
+    # Si absent ou vide, on utilise gf_ticker comme fallback (mÃªme ticker)
     if "yf_ticker" not in df.columns or df["yf_ticker"].isna().all():
         df["yf_ticker"] = df["gf_ticker"].astype(str)
     else:
@@ -205,18 +205,18 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             other=df["gf_ticker"].astype(str)
         )
 
-    # Détection des doublons
+    # DÃ©tection des doublons
     dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
     st.session_state["ticker_dupes"] = dupes.to_dict("records") if not dupes.empty else []
 
     return df.reset_index(drop=True), source
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Métadonnées (nom, beta, earnings) — parallèle, cache 24h
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# MÃ©tadonnÃ©es (nom, beta, earnings) â€” parallÃ¨le, cache 24h
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _fetch_one_name(t: str) -> tuple[str, str]:
-    """Récupère uniquement le nom — rapide, via history_metadata."""
+    """RÃ©cupÃ¨re uniquement le nom â€” rapide, via history_metadata."""
     try:
         tk = yf.Ticker(t)
         tk.history(period="2d", interval="1d")
@@ -302,13 +302,13 @@ def _extract_earnings_from_calendar(cal):
 def _pick_earnings_dates(candidates: list[date]) -> tuple[date | None, date | None]:
     today = date.today()
     clean = sorted({d for d in candidates if isinstance(d, date)})
-    last_earnings = max((d for d in clean if d < today), default=None)
+    last_earnings = None
     next_earnings = min((d for d in clean if d >= today), default=None)
     return next_earnings, last_earnings
 
 
 def _fetch_one_be(t: str) -> tuple[str, dict]:
-    """Récupère beta + earnings — plus lent, via .info et .calendar."""
+    """RÃ©cupÃ¨re beta + earnings â€” plus lent, via .info et .calendar."""
     result: dict = {"beta": None, "earnings": None, "_diag": []}
     try:
         tk = yf.Ticker(t)
@@ -366,7 +366,7 @@ def fetch_be_cached(ticker: str) -> dict:
     return _fetch_one_be(ticker)[1]
 
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    """Beta + Earnings — déclenchement manuel via bouton."""
+    """Beta + Earnings â€” dÃ©clenchement manuel via bouton."""
     import time
     results: dict[str, dict] = {}
     empty = {"beta": None, "earnings": None}
@@ -395,9 +395,9 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     ]
     return results
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Cours Yahoo Finance
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _chunked(items, size):
     for i in range(0, len(items), size): yield items[i: i + size]
@@ -442,9 +442,9 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return results
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Sparklines 52 semaines — cache 24h
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Sparklines 52 semaines â€” cache 24h
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @st.cache_data(ttl=SPARK_TTL, show_spinner=False)
 def fetch_sparklines(yf_tickers: tuple[str, ...]) -> dict[str, list[float]]:
@@ -471,9 +471,9 @@ def fetch_sparklines(yf_tickers: tuple[str, ...]) -> dict[str, list[float]]:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return result
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Calculs métier
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Calculs mÃ©tier
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def compute_statut(price, buy, fair, trim, exit_) -> str:
     if any(v is None or (isinstance(v, float) and pd.isna(v))
@@ -503,67 +503,61 @@ def compute_upside(price, fair, trim) -> float | None:
         return (target - float(price)) / float(price) * 100
     except Exception: return None
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Formatage HTML
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def fmt_price(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "â€”"
     return f"{float(v):,.2f}"
 
 def fmt_note(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "â€”"
     return str(int(float(v)))
 
 def fmt_score(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "â€”"
     return str(round(float(v)))
 
 def fmt_beta(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "â€”"
     return f"{float(v):.2f}"
 
 def fmt_maj(maj_date, earnings_date) -> str:
     """
-    MAJ rouge si :
-    - Earnings existe ET est dans le passé ET MAJ < Earnings
-      (l'analyse précède les derniers résultats publiés → potentiellement obsolète)
-    - Pas d'Earnings ET MAJ > 30 jours
+    MAJ rouge si l'analyse a plus de 30 jours.
     """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
-        return "—"
+        return "â€”"
     try:
         d = maj_date if isinstance(maj_date, date) else pd.to_datetime(maj_date).date()
         s = d.strftime("%d-%m-%Y")
         today = date.today()
-        red = False
-        if earnings_date is not None:
-            # Seulement si les earnings sont dans le passé
-            if earnings_date < today:
-                red = d < earnings_date  # analyse antérieure aux derniers résultats
-        else:
-            red = (today - d).days > 30
+        red = (today - d).days > 30
         return f'<span style="color:#ef4444">{s}</span>' if red else s
     except Exception:
-        return "—"
+        return "â€”"
 
 def fmt_earnings(d) -> str:
-    if d is None or (isinstance(d, float) and pd.isna(d)): return "—"
+    if d is None or (isinstance(d, float) and pd.isna(d)): return "â€”"
     try:
         if not isinstance(d, date): d = pd.to_datetime(d).date()
-        return d.strftime("%d-%m-%Y")
-    except Exception: return "—"
+        s = d.strftime("%d-%m-%Y")
+        if (d - date.today()).days < 7:
+            return f'<span style="color:#ef4444">{s}</span>'
+        return s
+    except Exception: return "â€”"
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
-        return '<span style="color:#4a5980">—</span>'
+        return '<span style="color:#4a5980">â€”</span>'
     c = "#22c55e" if chg >= 0 else "#ef4444"
     a = "+" if chg >= 0 else ""
     return f'<span style="color:{c}">{a}{chg:.2f}%</span>'
 
 def html_upside(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return '<span style="color:#4a5980">—</span>'
+        return '<span style="color:#4a5980">â€”</span>'
     c = "#22c55e" if v >= 0 else "#ef4444"
     a = "+" if v >= 0 else ""
     return f'<span style="color:{c};font-weight:600">{a}{v:.1f}%</span>'
@@ -578,7 +572,7 @@ def html_statut(statut) -> str:
     }
     color, bg = cfg.get(statut, ("#4a5980", "transparent"))
     if not statut:
-        return '<span style="color:#4a5980">—</span>'
+        return '<span style="color:#4a5980">â€”</span>'
     return (f'<span style="color:{color};background:{bg};'
             f'padding:2px 8px;border-radius:20px;font-size:.75rem;'
             f'font-weight:600;white-space:nowrap">{statut}</span>')
@@ -620,11 +614,11 @@ def html_link(url) -> str:
     if not u.startswith("http"): return ""
     return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
-            f'text-decoration:none;font-family:monospace">↗</a>')
+            f'text-decoration:none;font-family:monospace">â†—</a>')
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Construction des lignes
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
                names: dict, be_data: dict, sparklines: dict,
@@ -673,14 +667,14 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_statut":       statut,
             "_radar":        radar,
             "_flagged":      flagged,
-            # Données brutes pour export XLS
+            # DonnÃ©es brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
-                "Ticker":   gf, "Société": name_u,
+                "Ticker":   gf, "SociÃ©tÃ©": name_u,
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(float(score)) if score is not None else "",
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
-                "Qualité":  int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
+                "QualitÃ©":  int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
                 "Beta":     beta,
                 "Statut":   statut,
                 "Earnings": earnings.strftime("%d-%m-%Y") if earnings else "",
@@ -688,7 +682,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             # HTML
             "MAJ":      fmt_maj(r.get("last_update"), earnings),
             "Ticker":   html_ticker_link(yf_s, gf),
-            "Société":  f'<span title="{name_u}">{name_html}</span>',
+            "SociÃ©tÃ©":  f'<span title="{name_u}">{name_html}</span>',
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
@@ -698,24 +692,24 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_price(fair),
             "Trim":     fmt_price(trim),
             "Exit":     fmt_price(exit_),
-            "Qualité":  fmt_note(r.get("note")),
+            "QualitÃ©":  fmt_note(r.get("note")),
             "Beta":     fmt_beta(beta),
             "Statut":   html_statut(statut),
             "Earnings": fmt_earnings(earnings),
-            "↗":        html_link(r.get("url")),
+            "â†—":        html_link(r.get("url")),
         })
     return rows
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Export XLS
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "Ticker", "Société", "Prix", "Var %", "Upside %",
+    cols = ["MAJ", "Ticker", "SociÃ©tÃ©", "Prix", "Var %", "Upside %",
             "Score", "Buy", "Fair", "Trim", "Exit",
-            "Qualité", "Beta", "Statut", "Earnings"]
+            "QualitÃ©", "Beta", "Statut", "Earnings"]
     ws.append(cols)
     for r in rows:
         raw = r["_raw"]
@@ -727,9 +721,9 @@ def export_xlsx(rows: list[dict]) -> bytes:
     wb.save(buf)
     return buf.getvalue()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Tableau HTML
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 CSS = """<style>
 .wl-wrap {
@@ -779,8 +773,8 @@ CSS = """<style>
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-radar td { background: rgba(34,197,94,.07) !important; }
 .wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
-.wl-flagged td { background: rgba(139,92,246,.1) !important; }
-.wl-flagged:hover td { background: rgba(139,92,246,.16) !important; }
+.wl-flagged td { background: #2d1f5e !important; }
+.wl-flagged:hover td { background: #3a2875 !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
@@ -812,16 +806,16 @@ def render_table(rows: list[dict]) -> None:
         unsafe_allow_html=True,
     )
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Rendu d'un onglet
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def render_tab(rows: list[dict], key: str) -> None:
     c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
-            "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
+            "Statut + Score", "Ticker Aâ†’Z", "Score â†“", "QualitÃ© â†“",
+            "Upside â†“", "Var % â†‘", "Var % â†“", "MAJ â†“", "Beta â†“",
         ], key=f"{key}_t")
     with c2:
         sf = st.selectbox("Statut",
@@ -832,27 +826,27 @@ def render_tab(rows: list[dict], key: str) -> None:
 
     sort_map = {
         "Statut + Score": lambda r: (r["_statut_order"], -r["_score"]),
-        "Ticker A→Z":     lambda r: r["_ticker"],
-        "Score ↓":        lambda r: -r["_score"],
-        "Qualité ↓":      lambda r: -r["_score"],
-        "Upside ↓":       lambda r: -r["_upside"],
-        "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
-        "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
-        "MAJ ↓":          lambda r: r["_maj"] or date.max,
-        "Beta ↓":         lambda r: (r["_beta"] is None, -(r["_beta"] or 0)),
+        "Ticker Aâ†’Z":     lambda r: r["_ticker"],
+        "Score â†“":        lambda r: -r["_score"],
+        "QualitÃ© â†“":      lambda r: -r["_score"],
+        "Upside â†“":       lambda r: -r["_upside"],
+        "Var % â†‘":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
+        "Var % â†“":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
+        "MAJ â†“":          lambda r: r["_maj"] or date.max,
+        "Beta â†“":         lambda r: (r["_beta"] is None, -(r["_beta"] or 0)),
     }
     key_fn = sort_map.get(sort_choice)
     if key_fn:
-        rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
+        rows.sort(key=key_fn, reverse=(sort_choice == "MAJ â†“"))
 
     render_table(rows)
 
     missing = [r["_ticker"] for r in rows if not r["_price_ok"]]
     if missing:
-        with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
+        with st.expander(f"âš ï¸ {len(missing)} titre(s) sans cours"):
             st.write(", ".join(missing))
 
-    # Export Excel — sous le tableau, aligné à droite, avec espacement
+    # Export Excel â€” sous le tableau, alignÃ© Ã  droite, avec espacement
     if rows:
         st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
         _, right = st.columns([3, 1])
@@ -866,17 +860,17 @@ def render_tab(rows: list[dict], key: str) -> None:
                 use_container_width=True,
             )
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Onglet Debug
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: dict) -> None:
     st.subheader("Diagnostic colonnes")
-    st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
+    st.write(f"**{len(tickers_df)} titres chargÃ©s.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
 
-    # Affichage brut CSV pour vérifier les noms originaux
-    with st.expander("Colonnes brutes du CSV (2 premières lignes)"):
+    # Affichage brut CSV pour vÃ©rifier les noms originaux
+    with st.expander("Colonnes brutes du CSV (2 premiÃ¨res lignes)"):
         try:
             df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8-sig", header=0,
                                  dtype=str, nrows=2)
@@ -891,7 +885,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             st.dataframe(df_raw, use_container_width=True)
 
     if tickers_df.empty:
-        st.error("DataFrame vide — impossible d'afficher les diagnostics.")
+        st.error("DataFrame vide â€” impossible d'afficher les diagnostics.")
         return
 
     id_cols = [c for c in ["gf_ticker", "yf_ticker", "name"] if c in tickers_df.columns]
@@ -926,32 +920,32 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
     if missing_earnings:
         st.dataframe(pd.DataFrame(missing_earnings), use_container_width=True, hide_index=True)
     else:
-        st.success("Aucun ticker sans earnings dans les données chargées.")
+        st.success("Aucun ticker sans earnings dans les donnÃ©es chargÃ©es.")
 
     be_debug = st.session_state.get("be_debug", [])
     if be_debug:
         st.subheader("Diagnostic Beta & Earnings")
         st.dataframe(pd.DataFrame(be_debug), use_container_width=True, hide_index=True)
     else:
-        st.info("Charge Beta & Earnings pour voir les diagnostics détaillés.")
+        st.info("Charge Beta & Earnings pour voir les diagnostics dÃ©taillÃ©s.")
 
-    st.subheader("Mapping complet gf_ticker → yf_ticker")
+    st.subheader("Mapping complet gf_ticker â†’ yf_ticker")
     st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
                  use_container_width=True, hide_index=True, height=400)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # APP PRINCIPALE
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-# ── 1. Sheet en premier ───────────────────────────────────────────────────────
-with st.spinner("Chargement du Google Sheet…"):
+# â”€â”€ 1. Sheet en premier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+with st.spinner("Chargement du Google Sheetâ€¦"):
     try:
         tickers_df, data_source = load_tickers()
     except Exception as exc:
         st.error(str(exc)); st.stop()
 
 if tickers_df.empty:
-    st.error("Le DataFrame est vide après chargement. Voici les colonnes brutes du sheet :")
+    st.error("Le DataFrame est vide aprÃ¨s chargement. Voici les colonnes brutes du sheet :")
     try:
         df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8", header=0, dtype=str, nrows=3)
     except Exception:
@@ -983,19 +977,19 @@ components.html("""
 if st.query_params.get("be") == "1":
     st.session_state["be_enabled"] = True
 
-# ── CSS global en premier (avant tout élément UI) ─────────────────────────────
+# â”€â”€ CSS global en premier (avant tout Ã©lÃ©ment UI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Fond & layout ── */
+/* â”€â”€ Fond & layout â”€â”€ */
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
 .block-container { padding-top: 3rem !important; max-width: 100% !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
-/* ── Header custom ── */
+/* â”€â”€ Header custom â”€â”€ */
 .wl-topbar {
   display: flex;
   align-items: center;
@@ -1041,7 +1035,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 .wl-stat-val.ok    { color: #22c55e; }
 .wl-stat-val.warn  { color: #fbbf24; }
 
-/* ── Boutons ── */
+/* â”€â”€ Boutons â”€â”€ */
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
   border: none !important; border-radius: 8px !important;
@@ -1059,13 +1053,13 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 }
 .stButton > button:hover { border-color: #3b82f6 !important; color: #93c5fd !important; }
 
-/* ── Download ── */
+/* â”€â”€ Download â”€â”€ */
 .stDownloadButton > button {
   background: #1a1f2e !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #5a6a8a !important; font-size: .75rem !important;
 }
 
-/* ── Onglets ── */
+/* â”€â”€ Onglets â”€â”€ */
 .stTabs [data-baseweb="tab-list"] {
   background: #141824; border-radius: 10px; padding: 4px; gap: 2px;
   border: 1px solid #252d3d;
@@ -1077,7 +1071,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
 
-/* ── Recherche ── */
+/* â”€â”€ Recherche â”€â”€ */
 .stTextInput > div > div > input {
   background: #141824 !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #e2e8f4 !important;
@@ -1092,13 +1086,13 @@ label[data-testid="stWidgetLabel"] p {
   color: #5a6a8a !important; text-transform: uppercase; letter-spacing: .07em;
 }
 
-/* ── Selectbox ── */
+/* â”€â”€ Selectbox â”€â”€ */
 .stSelectbox > div > div {
   background: #141824 !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #e2e8f4 !important; font-size: .82rem !important;
 }
 
-/* ── Misc ── */
+/* â”€â”€ Misc â”€â”€ */
 hr { border-color: #1e2535 !important; }
 .stCaption, .stCaption p { color: #3a4560 !important; font-size: .72rem !important; }
 .stWarning {
@@ -1112,20 +1106,20 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Alertes doublons ──────────────────────────────────────────────────────────
+# â”€â”€ Alertes doublons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
     tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
-    st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
+    st.warning(f"âš ï¸ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
 
-# ── Header bar : stats + boutons ──────────────────────────────────────────────
-last_ts = st.session_state.get("last_fetch_ts", "—")
+# â”€â”€ Header bar : stats + boutons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+last_ts = st.session_state.get("last_fetch_ts", "â€”")
 
-# Placeholder pour stats (mise à jour après fetch des prix)
+# Placeholder pour stats (mise Ã  jour aprÃ¨s fetch des prix)
 stats_placeholder = st.empty()
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
-    ok_str   = f"{ok}/{total}" if ok is not None else "…"
+    ok_str   = f"{ok}/{total}" if ok is not None else "â€¦"
     ok_cls   = "ok" if ok == total else "warn" if ok is not None else "muted"
     stats_placeholder.markdown(f"""
 <div class="wl-topbar">
@@ -1139,11 +1133,11 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
       <div class="wl-stat-val">{wl_count}</div>
     </div>
     <div class="wl-stat">
-      <div class="wl-stat-label">Prix récupérés</div>
+      <div class="wl-stat-label">Prix rÃ©cupÃ©rÃ©s</div>
       <div class="wl-stat-val {ok_cls}">{ok_str}</div>
     </div>
     <div class="wl-stat">
-      <div class="wl-stat-label">Mise à jour</div>
+      <div class="wl-stat-label">Mise Ã  jour</div>
       <div class="wl-stat-val muted">{last_ts}</div>
     </div>
   </div>
@@ -1153,17 +1147,19 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 # Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
 
-# ── Boutons compacts ──────────────────────────────────────────────────────────
+# â”€â”€ Boutons compacts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 from math import ceil
 n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
 
 b1, b2 = st.columns([1, 1])
 with b1:
     if st.button("Actualiser", use_container_width=True):
+        st.session_state["last_action"] = "refresh"
         fetch_name_cached.clear(); fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
+        st.session_state["last_action"] = "be"
         fetch_be_cached.clear()
         st.session_state["be_enabled"] = True
         st.query_params["be"] = "1"
@@ -1174,35 +1170,39 @@ with b2:
         """, height=0)
         st.rerun()
 
-# ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
-with st.spinner("Noms des sociétés…"):
+# â”€â”€ 2. Noms (Yahoo, rapide) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+last_action = st.session_state.pop("last_action", "")
+if last_action == "be":
     names = fetch_names(valid_yf)
+else:
+    with st.spinner("Noms des sociétés..."):
+        names = fetch_names(valid_yf)
 
-# ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
+# â”€â”€ 3. Beta & Earnings â€” servi silencieusement depuis le cache 24h â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 load_be_now = st.session_state.get("be_enabled", False)
 be_data = {t: {"beta": None, "earnings": None} for t in valid_yf}
 if load_be_now:
     with st.spinner("Beta & Earnings..."):
         be_data = fetch_be(valid_yf)
 
-# ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
-with st.spinner("Cours en temps réel…"):
+# â”€â”€ 4. Cours (Yahoo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+with st.spinner("Cours en temps rÃ©elâ€¦"):
     prices = fetch_prices(valid_yf)
 
-# ── 5. Sparklines (Yahoo, cache 24h) ─────────────────────────────────────────
-with st.spinner("Sparklines 52 semaines…"):
+# â”€â”€ 5. Sparklines (Yahoo, cache 24h) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+with st.spinner("Sparklines 52 semainesâ€¦"):
     sparklines = fetch_sparklines(valid_yf)
 
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
 
-# Mise à jour du topbar avec les prix récupérés
+# Mise Ã  jour du topbar avec les prix rÃ©cupÃ©rÃ©s
 render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
               ok=ok, total=len(valid_yf))
 
-# ── Recherche globale ──────────────────────────────────────────────────────────
-# Auto-sélection du texte dans tous les champs texte
+# â”€â”€ Recherche globale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Auto-sÃ©lection du texte dans tous les champs texte
 components.html("""
 <script>
 (function() {
@@ -1226,7 +1226,7 @@ components.html("""
 
 global_search = st.text_input(
     "Recherche",
-    placeholder="Ticker ou société…",
+    placeholder="Ticker ou sociÃ©tÃ©â€¦",
     key="global_search",
     label_visibility="collapsed",
 )
@@ -1242,11 +1242,11 @@ if global_search:
     rows_wl = [r for r in rows_wl if q in r["_ticker"].lower() or q in r["_name"].lower()]
 
 if global_search:
-    # Vue combinée quand une recherche est active
+    # Vue combinÃ©e quand une recherche est active
     combined = rows_pf + rows_wl
     total = len(combined)
     st.markdown(f"<div style='color:#5a6a8a;font-size:.75rem;margin:6px 0 4px'>"
-                f"{total} résultat(s) dans Portefeuille + Watchlist</div>",
+                f"{total} rÃ©sultat(s) dans Portefeuille + Watchlist</div>",
                 unsafe_allow_html=True)
     render_tab(combined, key="search")
 else:
@@ -1263,13 +1263,26 @@ else:
     with tab3:
         render_debug(tickers_df, prices, names, be_data)
 
-components.html(
-    f"""
+if not global_search:
+    components.html(
+        f"""
+        <script>
+        if (window.parent.__watchlistAutoRefreshTimer) {
+            window.parent.clearTimeout(window.parent.__watchlistAutoRefreshTimer);
+        }
+        window.parent.__watchlistAutoRefreshTimer = window.parent.setTimeout(function() {
+            window.parent.location.reload();
+        }, {AUTO_REFRESH_SEC * 1000});
+        </script>
+        """,
+        height=0,
+    )
+else:
+    components.html("""
     <script>
-    setTimeout(function() {{
-        window.parent.location.reload();
-    }}, {AUTO_REFRESH_SEC * 1000});
+    if (window.parent.__watchlistAutoRefreshTimer) {
+        window.parent.clearTimeout(window.parent.__watchlistAutoRefreshTimer);
+        window.parent.__watchlistAutoRefreshTimer = null;
+    }
     </script>
-    """,
-    height=0,
-)
+    """, height=0)
