@@ -1255,18 +1255,23 @@ components.html("""
 </script>
 """, height=0)
 
+if "search_input" not in st.session_state:
+    st.session_state["search_input"] = st.session_state.get("global_search", "")
+
 search_col, clear_col = st.columns([12, 1])
 with search_col:
     global_search = st.text_input(
         "Recherche",
         placeholder="Ticker ou société…",
-        key="global_search",
+        key="search_input",
         label_visibility="collapsed",
     )
 with clear_col:
     if st.button("Clear", key="clear_search", use_container_width=True):
-        st.session_state["global_search"] = ""
+        st.session_state["search_input"] = ""
         st.rerun()
+
+st.session_state["global_search"] = global_search
 
 # Construire les rows des deux onglets une seule fois
 rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
