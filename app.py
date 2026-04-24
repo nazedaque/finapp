@@ -327,7 +327,7 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
         "beta": None,
         "earnings": None,
         "_diag": [],
-        "_beta_fields": {"beta": None, "beta3Year": None, "beta5Year": None},
+        "_beta_fields": {"beta": None},
     }
     try:
         tk = yf.Ticker(t)
@@ -336,14 +336,8 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
             info = tk.info or {}
             result["_beta_fields"] = {
                 "beta": info.get("beta"),
-                "beta3Year": info.get("beta3Year"),
-                "beta5Year": info.get("beta5Year"),
             }
             b = info.get("beta")
-            if b is None:
-                b = info.get("beta3Year")
-            if b is None:
-                b = info.get("beta5Year")
             if b is not None:
                 result["beta"] = float(b)
                 result["_diag"].append("beta:info")
@@ -392,8 +386,6 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
             "beta": data.get("beta"),
             "earnings": data.get("earnings"),
             "beta_raw": data.get("_beta_fields", {}).get("beta"),
-            "beta3Year_raw": data.get("_beta_fields", {}).get("beta3Year"),
-            "beta5Year_raw": data.get("_beta_fields", {}).get("beta5Year"),
             "diag": ", ".join(data.get("_diag", [])),
         }
         for t, data in results.items()
@@ -532,9 +524,8 @@ def fmt_beta(v) -> str:
 def fmt_maj(maj_date, earnings_date) -> str:
     """
     MAJ rouge si :
-    - Earnings existe ET est dans le passé ET MAJ < Earnings
-      (l'analyse précède les derniers résultats publiés → potentiellement obsolète)
-    - Pas d'Earnings ET MAJ > 30 jours
+    - la mise à jour a plus de 30 jours
+    - ou si MAJ est postérieure à la date affichée dans Earnings
     """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
         return "—"
@@ -542,13 +533,13 @@ def fmt_maj(maj_date, earnings_date) -> str:
         d = maj_date if isinstance(maj_date, date) else pd.to_datetime(maj_date).date()
         s = d.strftime("%d-%m-%Y")
         today = date.today()
-        red = False
+        red = (today - d).days > 30
         if earnings_date is not None:
-            # Seulement si les earnings sont dans le passé
-            if earnings_date < today:
-                red = d < earnings_date  # analyse antérieure aux derniers résultats
-        else:
-            red = (today - d).days > 30
+            try:
+                ed = earnings_date if isinstance(earnings_date, date) else pd.to_datetime(earnings_date).date()
+                red = red or (d > ed)
+            except Exception:
+                pass
         return f'<span style="color:#ef4444">{s}</span>' if red else s
     except Exception:
         return "—"
@@ -948,8 +939,6 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             beta_fields_rows.append({
                 "yf_ticker": yf,
                 "beta": raw.get("beta"),
-                "beta3Year": raw.get("beta3Year"),
-                "beta5Year": raw.get("beta5Year"),
                 "beta_final": data.get("beta"),
             })
         if beta_fields_rows:
