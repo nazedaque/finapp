@@ -779,8 +779,8 @@ CSS = """<style>
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-radar td { background: rgba(34,197,94,.07) !important; }
 .wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
-.wl-flagged td { background: rgba(139,92,246,.1) !important; }
-.wl-flagged:hover td { background: rgba(139,92,246,.16) !important; }
+.wl-flagged td { background: #2d1f5e !important; }
+.wl-flagged:hover td { background: #3a2875 !important; }
 </style>"""
 
 def render_table(rows: list[dict]) -> None:
