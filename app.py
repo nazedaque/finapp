@@ -525,7 +525,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
     """
     MAJ rouge si :
     - la mise à jour a plus de 30 jours
-    - ou si MAJ est antérieure à la date affichée dans Earnings
+    - ou si MAJ est antérieure à Earnings, à condition que Earnings ne soit pas future
     """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
         return "—"
@@ -537,7 +537,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
         if earnings_date is not None:
             try:
                 ed = earnings_date if isinstance(earnings_date, date) else pd.to_datetime(earnings_date).date()
-                red = red or (d < ed)
+                red = red or (ed <= today and d < ed)
             except Exception:
                 pass
         return f'<span style="color:#ef4444">{s}</span>' if red else s
@@ -914,8 +914,13 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             pass
 
         older_than_30 = (today - maj_date).days > 30 if maj_date is not None else False
-        maj_gt_earnings = (maj_date > earnings_date) if (maj_date is not None and earnings_date is not None) else False
-        maj_red = older_than_30 or maj_gt_earnings
+        earnings_not_future = (earnings_date <= today) if earnings_date is not None else False
+        maj_lt_past_earnings = (
+            maj_date < earnings_date
+            if (maj_date is not None and earnings_date is not None and earnings_not_future)
+            else False
+        )
+        maj_red = older_than_30 or maj_lt_past_earnings
 
         debug_rows.append({
             "gf_ticker": row.get("gf_ticker", ""),
@@ -926,7 +931,8 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             "Earnings_raw": earnings_raw,
             "Earnings_date": earnings_date,
             "older_than_30": older_than_30,
-            "maj_gt_earnings": maj_gt_earnings,
+            "earnings_not_future": earnings_not_future,
+            "maj_lt_past_earnings": maj_lt_past_earnings,
             "maj_red": maj_red,
         })
 
