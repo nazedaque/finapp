@@ -525,7 +525,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
     """
     MAJ rouge si :
     - la mise à jour a plus de 30 jours
-    - ou si MAJ est postérieure à la date affichée dans Earnings
+    - ou si MAJ est antérieure à la date affichée dans Earnings
     """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
         return "—"
@@ -537,7 +537,7 @@ def fmt_maj(maj_date, earnings_date) -> str:
         if earnings_date is not None:
             try:
                 ed = earnings_date if isinstance(earnings_date, date) else pd.to_datetime(earnings_date).date()
-                red = red or (d > ed)
+                red = red or (d < ed)
             except Exception:
                 pass
         return f'<span style="color:#ef4444">{s}</span>' if red else s
