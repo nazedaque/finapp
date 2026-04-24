@@ -282,42 +282,68 @@ def _coerce_date(value):
     return None
 
 
+def _coerce_dates(value) -> list[date]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        dates: list[date] = []
+        for item in value:
+            dates.extend(_coerce_dates(item))
+        return dates
+    parsed = _coerce_date(value)
+    return [parsed] if parsed is not None else []
+
+
 def _extract_earnings_from_calendar(cal):
+    candidates: list[date] = []
     if cal is None:
         return None
     if isinstance(cal, dict):
         for key in ("Earnings Date", "EarningsDate"):
             if key in cal:
-                return _coerce_date(cal.get(key))
-        return None
+                candidates.extend(_coerce_dates(cal.get(key)))
+                break
     if hasattr(cal, "loc"):
         for key in ("Earnings Date", "EarningsDate"):
             try:
-                return _coerce_date(cal.loc[key].iloc[0])
+                row = cal.loc[key]
+                if hasattr(row, "tolist"):
+                    candidates.extend(_coerce_dates(row.tolist()))
+                else:
+                    candidates.extend(_coerce_dates(row))
+                break
             except Exception:
                 continue
-    return None
-
-
-def _pick_earnings_dates(candidates: list[date]) -> tuple[date | None, date | None]:
-    today = date.today()
     clean = sorted({d for d in candidates if isinstance(d, date)})
-    last_earnings = max((d for d in clean if d < today), default=None)
-    next_earnings = min((d for d in clean if d >= today), default=None)
-    return next_earnings, last_earnings
+    if not clean:
+        return None
+    today = date.today()
+    return min(clean, key=lambda d: abs((d - today).days))
 
 
 def _fetch_one_be(t: str) -> tuple[str, dict]:
     """Récupère beta + earnings — plus lent, via .info et .calendar."""
-    result: dict = {"beta": None, "earnings": None, "_diag": []}
+    result: dict = {
+        "beta": None,
+        "earnings": None,
+        "_diag": [],
+        "_beta_fields": {"beta": None, "beta3Year": None, "beta5Year": None},
+    }
     try:
         tk = yf.Ticker(t)
         info = {}
         try:
             info = tk.info or {}
+            result["_beta_fields"] = {
+                "beta": info.get("beta"),
+                "beta3Year": info.get("beta3Year"),
+                "beta5Year": info.get("beta5Year"),
+            }
             b = info.get("beta")
             if b is None:
                 b = info.get("beta3Year")
+            if b is None:
+                b = info.get("beta5Year")
             if b is not None:
                 result["beta"] = float(b)
                 result["_diag"].append("beta:info")
@@ -331,29 +357,6 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
                 result["_diag"].append("earnings:calendar")
         except Exception:
             result["_diag"].append("earnings:calendar_error")
-
-        if result["earnings"] is None:
-            try:
-                for key in ("earningsTimestamp", "earningsDate",
-                            "earningsTimestampStart", "earningsTimestampEnd"):
-                    parsed = _coerce_date(info.get(key))
-                    if parsed is not None:
-                        result["earnings"] = parsed
-                        result["_diag"].append(f"earnings:info:{key}")
-                        break
-            except Exception:
-                result["_diag"].append("earnings:info_error")
-
-        if result["earnings"] is None:
-            try:
-                earn_df = tk.get_earnings_dates(limit=4)
-                if earn_df is not None and len(earn_df.index) > 0:
-                    parsed = _coerce_date(list(earn_df.index))
-                    if parsed is not None:
-                        result["earnings"] = parsed
-                        result["_diag"].append("earnings:get_earnings_dates")
-            except Exception:
-                result["_diag"].append("earnings:get_earnings_dates_error")
 
         if result["earnings"] is None:
             result["_diag"].append("earnings:missing")
@@ -388,6 +391,9 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
             "ticker": t,
             "beta": data.get("beta"),
             "earnings": data.get("earnings"),
+            "beta_raw": data.get("_beta_fields", {}).get("beta"),
+            "beta3Year_raw": data.get("_beta_fields", {}).get("beta3Year"),
+            "beta5Year_raw": data.get("_beta_fields", {}).get("beta5Year"),
             "diag": ", ".join(data.get("_diag", [])),
         }
         for t, data in results.items()
@@ -934,6 +940,21 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
         st.dataframe(pd.DataFrame(be_debug), use_container_width=True, hide_index=True)
     else:
         st.info("Charge Beta & Earnings pour voir les diagnostics détaillés.")
+
+    if be_data:
+        beta_fields_rows = []
+        for yf, data in list(be_data.items())[:10]:
+            raw = data.get("_beta_fields", {}) or {}
+            beta_fields_rows.append({
+                "yf_ticker": yf,
+                "beta": raw.get("beta"),
+                "beta3Year": raw.get("beta3Year"),
+                "beta5Year": raw.get("beta5Year"),
+                "beta_final": data.get("beta"),
+            })
+        if beta_fields_rows:
+            st.subheader("Aperçu des champs beta*")
+            st.dataframe(pd.DataFrame(beta_fields_rows), use_container_width=True, hide_index=True)
 
     st.subheader("Mapping complet gf_ticker → yf_ticker")
     st.dataframe(tickers_df[id_cols] if id_cols else tickers_df,
