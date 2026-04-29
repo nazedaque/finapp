@@ -1160,7 +1160,7 @@ b1, b2 = st.columns([1, 1])
 with b1:
     if st.button("Actualiser", use_container_width=True):
         st.session_state["last_action"] = "refresh"
-        fetch_name_cached.clear(); fetch_prices.clear(); fetch_sparklines.clear()
+        fetch_prices.clear(); fetch_sparklines.clear()
         st.rerun()
 with b2:
     if st.button("Beta & Earnings", use_container_width=True):
@@ -1179,9 +1179,17 @@ with b2:
 last_action = st.session_state.pop("last_action", "")
 data_key = valid_yf
 same_data_key = st.session_state.get("data_key") == data_key
+cached_names = st.session_state.get("names_data", {})
+missing_name_tickers = tuple(t for t in valid_yf if not cached_names.get(t))
 
 if same_data_key and last_action != "refresh" and "names_data" in st.session_state:
     names = st.session_state["names_data"]
+elif last_action == "refresh":
+    names = {t: cached_names.get(t, "") for t in valid_yf}
+    if missing_name_tickers:
+        with st.spinner("Noms des nouveaux tickers…"):
+            names.update(fetch_names(missing_name_tickers))
+    st.session_state["names_data"] = names
 elif last_action == "be":
     names = fetch_names(valid_yf)
     st.session_state["names_data"] = names
