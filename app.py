@@ -470,15 +470,12 @@ def html_score_mixte(v) -> str:
     except Exception:
         return ""
     value = 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
-    rest = 100 - value
     color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
     return (
-        '<svg class="score-spark" width="140" height="14" viewBox="0 0 100 10" '
-        'preserveAspectRatio="none" role="img" aria-label="Score {:.0f}">'
-        '<rect x="0" y="0" width="{:.2f}" height="10" fill="{}"></rect>'
-        '<rect x="{:.2f}" y="0" width="{:.2f}" height="10" fill="#E3E7EA"></rect>'
-        '</svg>'
-    ).format(score, value, color, value, rest)
+        '<div class="score-spark" title="{:.0f}" role="img" aria-label="Score {:.0f}">'
+        '<div class="score-spark-fill" style="width:{:.2f}%;background:{}"></div>'
+        '</div>'
+    ).format(score, score, value, color)
 
 def fmt_purchase_date(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
@@ -684,8 +681,14 @@ CSS = """<style>
   height: 14px;
   width: 100%;
   margin: 0 auto;
+  background: #cbd3dc;
   display: block;
   border-radius: 3px;
+  overflow: hidden;
+}
+.score-spark-fill {
+  height: 100%;
+  border-radius: 3px 0 0 3px;
 }
 </style>"""
 
