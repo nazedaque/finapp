@@ -24,12 +24,10 @@ SHEET_NAME    = "Travail"
 SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
                  f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}")
 CSV_FALLBACK      = "tickers.csv"
-AUTO_REFRESH_SEC  = 15 * 60
-REFRESH_TTL       = AUTO_REFRESH_SEC
+REFRESH_TTL       = 15 * 60
 SHEET_TTL         = 3_600
 NAME_TTL          = 7 * 86_400
 BE_TTL            = 86_400
-SPARK_TTL         = 6 * 3_600
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
@@ -45,20 +43,20 @@ STATUT_COLOR = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Ticker", "Société", "Prix", "Var %", "Upside", "Spark",
+    "MAJ", "Ticker", "Société", "Prix", "Var %", "Upside",
     "Score", "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-    "Statut", "Earnings", "↗",
+    "Statut", "↗",
 ]
 COL_WIDTHS = {
     "MAJ": "92px", "Ticker": "82px", "Société": "210px",
-    "Prix": "78px", "Var %": "80px", "Upside": "72px", "Spark": "88px",
+    "Prix": "78px", "Var %": "80px", "Upside": "72px",
     "Score": "52px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
     "Qualité": "58px", "Beta": "56px", "Statut": "90px",
-    "Earnings": "98px", "↗": "36px",
+    "↗": "36px",
 }
-CENTER = {"MAJ", "Prix", "Var %", "Upside", "Spark", "Score",
+CENTER = {"MAJ", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
-          "Statut", "Earnings", "↗"}
+          "Statut", "↗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -212,7 +210,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Métadonnées (nom, beta, earnings) — parallèle, cache 24h
+# Métadonnées (nom, beta) — parallèle, cache 24h
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _fetch_one_name(t: str) -> tuple[str, str]:
@@ -252,80 +250,10 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return names
 
-
-def _coerce_date(value):
-    if value is None:
-        return None
-    if isinstance(value, date):
-        return value
-    if hasattr(value, "date"):
-        try:
-            return value.date()
-        except Exception:
-            return None
-    if isinstance(value, (list, tuple, set)):
-        dates = [_coerce_date(v) for v in value]
-        dates = [d for d in dates if d is not None]
-        return min(dates) if dates else None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(value, tz=timezone.utc).date()
-        except Exception:
-            return None
-    if isinstance(value, str):
-        s = value.strip()
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
-            try:
-                return datetime.strptime(s[:10], fmt).date()
-            except Exception:
-                continue
-    return None
-
-
-def _coerce_dates(value) -> list[date]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        dates: list[date] = []
-        for item in value:
-            dates.extend(_coerce_dates(item))
-        return dates
-    parsed = _coerce_date(value)
-    return [parsed] if parsed is not None else []
-
-
-def _extract_earnings_from_calendar(cal):
-    candidates: list[date] = []
-    if cal is None:
-        return None
-    if isinstance(cal, dict):
-        for key in ("Earnings Date", "EarningsDate"):
-            if key in cal:
-                candidates.extend(_coerce_dates(cal.get(key)))
-                break
-    if hasattr(cal, "loc"):
-        for key in ("Earnings Date", "EarningsDate"):
-            try:
-                row = cal.loc[key]
-                if hasattr(row, "tolist"):
-                    candidates.extend(_coerce_dates(row.tolist()))
-                else:
-                    candidates.extend(_coerce_dates(row))
-                break
-            except Exception:
-                continue
-    clean = sorted({d for d in candidates if isinstance(d, date)})
-    if not clean:
-        return None
-    today = date.today()
-    return min(clean, key=lambda d: abs((d - today).days))
-
-
 def _fetch_one_be(t: str) -> tuple[str, dict]:
-    """Récupère beta + earnings — plus lent, via .info et .calendar."""
+    """Récupère beta — plus lent, via .info."""
     result: dict = {
         "beta": None,
-        "earnings": None,
         "_diag": [],
         "_beta_fields": {"beta": None},
     }
@@ -345,15 +273,6 @@ def _fetch_one_be(t: str) -> tuple[str, dict]:
                 result["_diag"].append("beta:missing")
         except Exception:
             result["_diag"].append("beta:info_error")
-        try:
-            result["earnings"] = _extract_earnings_from_calendar(tk.calendar)
-            if result["earnings"] is not None:
-                result["_diag"].append("earnings:calendar")
-        except Exception:
-            result["_diag"].append("earnings:calendar_error")
-
-        if result["earnings"] is None:
-            result["_diag"].append("earnings:missing")
     except Exception:
         result["_diag"].append("ticker:init_error")
     return t, result
@@ -363,10 +282,10 @@ def fetch_be_cached(ticker: str) -> dict:
     return _fetch_one_be(ticker)[1]
 
 def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    """Beta + Earnings — déclenchement manuel via bouton."""
+    """Beta — déclenchement via Actualiser."""
     import time
     results: dict[str, dict] = {}
-    empty = {"beta": None, "earnings": None}
+    empty = {"beta": None}
     tickers = list(yf_tickers)
     for i in range(0, len(tickers), YF_META_BATCH_SIZE):
         batch = tickers[i: i + YF_META_BATCH_SIZE]
@@ -384,12 +303,11 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         {
             "ticker": t,
             "beta": data.get("beta"),
-            "earnings": data.get("earnings"),
             "beta_raw": data.get("_beta_fields", {}).get("beta"),
             "diag": ", ".join(data.get("_diag", [])),
         }
         for t, data in results.items()
-        if data.get("beta") is None or data.get("earnings") is None
+        if data.get("beta") is None
     ]
     return results
 
@@ -439,35 +357,6 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return results
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Sparklines 52 semaines — cache 24h
-# ══════════════════════════════════════════════════════════════════════════════
-
-@st.cache_data(ttl=SPARK_TTL, show_spinner=False)
-def fetch_sparklines(yf_tickers: tuple[str, ...]) -> dict[str, list[float]]:
-    import time
-    result: dict[str, list[float]] = {}
-    tickers = list(yf_tickers)
-    for i, batch in enumerate(_chunked(tickers, BATCH_SIZE)):
-        try:
-            data = yf.download(tickers=" ".join(batch), period="1y", interval="1wk",
-                               auto_adjust=True, progress=False, group_by="ticker",
-                               threads=True)
-            multi = len(batch) > 1
-            for t in batch:
-                try:
-                    s = data[t]["Close"] if multi else data["Close"]
-                    closes = s.dropna().astype(float).tolist()
-                    if len(closes) >= 4:
-                        result[t] = closes
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
-            time.sleep(YF_BATCH_PAUSE_SEC)
-    return result
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Calculs métier
@@ -521,11 +410,9 @@ def fmt_beta(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):.2f}"
 
-def fmt_maj(maj_date, earnings_date) -> str:
+def fmt_maj(maj_date) -> str:
     """
-    MAJ rouge si :
-    - la mise à jour a plus de 30 jours
-    - ou si MAJ est antérieure à Earnings, à condition que Earnings ne soit pas future
+    MAJ rouge si la mise à jour a plus de 30 jours.
     """
     if maj_date is None or (isinstance(maj_date, float) and pd.isna(maj_date)):
         return "—"
@@ -534,22 +421,9 @@ def fmt_maj(maj_date, earnings_date) -> str:
         s = d.strftime("%d-%m-%Y")
         today = date.today()
         red = (today - d).days > 30
-        if earnings_date is not None:
-            try:
-                ed = earnings_date if isinstance(earnings_date, date) else pd.to_datetime(earnings_date).date()
-                red = red or (ed <= today and d < ed)
-            except Exception:
-                pass
         return f'<span style="color:#ef4444">{s}</span>' if red else s
     except Exception:
         return "—"
-
-def fmt_earnings(d) -> str:
-    if d is None or (isinstance(d, float) and pd.isna(d)): return "—"
-    try:
-        if not isinstance(d, date): d = pd.to_datetime(d).date()
-        return d.strftime("%d-%m-%Y")
-    except Exception: return "—"
 
 def html_var(chg) -> str:
     if chg is None or (isinstance(chg, float) and pd.isna(chg)):
@@ -560,10 +434,9 @@ def html_var(chg) -> str:
 
 def html_upside(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return '<span style="color:#4a5980">—</span>'
-    c = "#22c55e" if v >= 0 else "#ef4444"
+        return "—"
     a = "+" if v >= 0 else ""
-    return f'<span style="color:{c};font-weight:600">{a}{v:.1f}%</span>'
+    return f"{a}{v:.1f}%"
 
 def html_statut(statut) -> str:
     cfg = {
@@ -579,30 +452,6 @@ def html_statut(statut) -> str:
     return (f'<span style="color:{color};background:{bg};'
             f'padding:2px 8px;border-radius:20px;font-size:.75rem;'
             f'font-weight:600;white-space:nowrap">{statut}</span>')
-
-def html_sparkline(closes: list[float]) -> str:
-    if not closes or len(closes) < 4: return ""
-    mn, mx = min(closes), max(closes)
-    if mx == mn: return ""
-    w, h = 84, 24
-    pts = " ".join(
-        f"{i / (len(closes) - 1) * w:.1f},{h - (v - mn) / (mx - mn) * (h - 4) - 2:.1f}"
-        for i, v in enumerate(closes)
-    )
-    up    = closes[-1] >= closes[0]
-    color = "#22c55e" if up else "#ef4444"
-    # Zone remplie sous la courbe
-    first_x = "0"
-    last_x  = str(w)
-    fill_pts = f"0,{h} {pts} {last_x},{h}"
-    return (
-        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
-        f'style="display:inline-block;vertical-align:middle;opacity:.9">'
-        f'<polygon points="{fill_pts}" fill="{color}" fill-opacity=".12"/>'
-        f'<polyline points="{pts}" fill="none" stroke="{color}" '
-        f'stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
-        f'</svg>'
-    )
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
@@ -624,7 +473,7 @@ def html_link(url) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
-               names: dict, be_data: dict, sparklines: dict,
+               names: dict, be_data: dict,
                highlight_radar: bool = False) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
@@ -647,8 +496,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             score = r.get("score_sheet")
         upside  = compute_upside(price, fair, trim)
         beta    = be.get("beta")
-        earnings = be.get("earnings")
-        sparks  = sparklines.get(yf_s, [])
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else f'<span style="color:#475569;font-style:italic">{gf}</span>'
@@ -680,16 +527,14 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Qualité":  int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
                 "Beta":     beta,
                 "Statut":   statut,
-                "Earnings": earnings.strftime("%d-%m-%Y") if earnings else "",
             },
             # HTML
-            "MAJ":      fmt_maj(r.get("last_update"), earnings),
+            "MAJ":      fmt_maj(r.get("last_update")),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
-            "Spark":    html_sparkline(sparks),
             "Score":    fmt_score(score),
             "Buy":      fmt_price(buy),
             "Fair":     fmt_price(fair),
@@ -698,7 +543,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Qualité":  fmt_note(r.get("note")),
             "Beta":     fmt_beta(beta),
             "Statut":   html_statut(statut),
-            "Earnings": fmt_earnings(earnings),
             "↗":        html_link(r.get("url")),
         })
     return rows
@@ -712,7 +556,7 @@ def export_xlsx(rows: list[dict]) -> bytes:
     ws = wb.active
     cols = ["MAJ", "Ticker", "Société", "Prix", "Var %", "Upside %",
             "Score", "Buy", "Fair", "Trim", "Exit",
-            "Qualité", "Beta", "Statut", "Earnings"]
+            "Qualité", "Beta", "Statut"]
     ws.append(cols)
     for r in rows:
         raw = r["_raw"]
@@ -891,36 +735,22 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
         st.error("DataFrame vide — impossible d'afficher les diagnostics.")
         return
 
-    st.subheader("Diagnostic logique MAJ / Earnings")
+    st.subheader("Diagnostic logique MAJ")
     debug_rows = []
     today = date.today()
     for _, row in tickers_df.iterrows():
         yf = str(row.get("yf_ticker", "") or "")
         data = be_data.get(yf, {})
         maj_raw = row.get("last_update")
-        earnings_raw = data.get("earnings")
 
         maj_date = None
-        earnings_date = None
         try:
             if pd.notna(maj_raw) and maj_raw:
                 maj_date = maj_raw if isinstance(maj_raw, date) else pd.to_datetime(maj_raw).date()
         except Exception:
             pass
-        try:
-            if earnings_raw is not None and not (isinstance(earnings_raw, float) and pd.isna(earnings_raw)):
-                earnings_date = earnings_raw if isinstance(earnings_raw, date) else pd.to_datetime(earnings_raw).date()
-        except Exception:
-            pass
 
         older_than_30 = (today - maj_date).days > 30 if maj_date is not None else False
-        earnings_not_future = (earnings_date <= today) if earnings_date is not None else False
-        maj_lt_past_earnings = (
-            maj_date < earnings_date
-            if (maj_date is not None and earnings_date is not None and earnings_not_future)
-            else False
-        )
-        maj_red = older_than_30 or maj_lt_past_earnings
 
         debug_rows.append({
             "gf_ticker": row.get("gf_ticker", ""),
@@ -928,12 +758,9 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             "name": row.get("name", ""),
             "MAJ_raw": maj_raw,
             "MAJ_date": maj_date,
-            "Earnings_raw": earnings_raw,
-            "Earnings_date": earnings_date,
             "older_than_30": older_than_30,
-            "earnings_not_future": earnings_not_future,
-            "maj_lt_past_earnings": maj_lt_past_earnings,
-            "maj_red": maj_red,
+            "beta": data.get("beta"),
+            "price": prices.get(yf, {}).get("price"),
         })
 
     st.dataframe(pd.DataFrame(debug_rows), use_container_width=True, hide_index=True, height=500)
@@ -961,26 +788,6 @@ if tickers_df.empty:
 
 pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
-valid_yf = tuple(str(t) for t in tickers_df["yf_ticker"].dropna() if str(t).strip())
-
-components.html("""
-<script>
-(function() {
-    const key = "watchlist_be_enabled";
-    const value = window.localStorage.getItem(key);
-    if (value === "1") {
-        const url = new URL(window.parent.location.href);
-        if (url.searchParams.get("be") !== "1") {
-            url.searchParams.set("be", "1");
-            window.parent.location.replace(url.toString());
-        }
-    }
-})();
-</script>
-""", height=0)
-
-if st.query_params.get("be") == "1":
-    st.session_state["be_enabled"] = True
 
 # ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
@@ -1152,28 +959,26 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 # Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
 
-# ── Boutons compacts ──────────────────────────────────────────────────────────
-from math import ceil
-n = ceil(len(valid_yf) / BATCH_SIZE) if valid_yf else 0
+# ── Vue active ────────────────────────────────────────────────────────────────
+active_view = st.radio(
+    "Vue",
+    ["Portefeuille", "Watchlist", "Debug"],
+    horizontal=True,
+    key="active_view",
+    label_visibility="collapsed",
+)
+active_df = pf_df if active_view == "Portefeuille" else wl_df if active_view == "Watchlist" else tickers_df
+valid_yf = (
+    tuple(str(t) for t in active_df["yf_ticker"].dropna() if str(t).strip())
+    if active_view != "Debug"
+    else tuple()
+)
 
-b1, b2 = st.columns([1, 1])
-with b1:
-    if st.button("Actualiser", use_container_width=True):
-        st.session_state["last_action"] = "refresh"
-        fetch_prices.clear(); fetch_sparklines.clear()
-        st.rerun()
-with b2:
-    if st.button("Beta & Earnings", use_container_width=True):
-        st.session_state["last_action"] = "be"
-        fetch_be_cached.clear()
-        st.session_state["be_enabled"] = True
-        st.query_params["be"] = "1"
-        components.html("""
-        <script>
-        window.localStorage.setItem("watchlist_be_enabled", "1");
-        </script>
-        """, height=0)
-        st.rerun()
+if st.button("Actualiser", use_container_width=True, disabled=(active_view == "Debug")):
+    st.session_state["last_action"] = "refresh"
+    fetch_prices.clear()
+    fetch_be_cached.clear()
+    st.rerun()
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 last_action = st.session_state.pop("last_action", "")
@@ -1182,7 +987,9 @@ same_data_key = st.session_state.get("data_key") == data_key
 cached_names = st.session_state.get("names_data", {})
 missing_name_tickers = tuple(t for t in valid_yf if not cached_names.get(t))
 
-if same_data_key and last_action != "refresh" and "names_data" in st.session_state:
+if not valid_yf:
+    names = cached_names
+elif same_data_key and last_action != "refresh" and "names_data" in st.session_state:
     names = st.session_state["names_data"]
 elif last_action == "refresh":
     names = {t: cached_names.get(t, "") for t in valid_yf}
@@ -1190,44 +997,35 @@ elif last_action == "refresh":
         with st.spinner("Noms des nouveaux tickers…"):
             names.update(fetch_names(missing_name_tickers))
     st.session_state["names_data"] = names
-elif last_action == "be":
-    names = fetch_names(valid_yf)
-    st.session_state["names_data"] = names
 else:
-    names_spinner = "Actualisation des noms des sociétés…" if last_action == "refresh" else "Noms des sociétés…"
-    with st.spinner(names_spinner):
+    with st.spinner("Noms des sociétés…"):
         names = fetch_names(valid_yf)
     st.session_state["names_data"] = names
 
-# ── 3. Beta & Earnings — servi silencieusement depuis le cache 24h ────────────
-load_be_now = st.session_state.get("be_enabled", False)
-be_data = {t: {"beta": None, "earnings": None} for t in valid_yf}
-if load_be_now:
-    if same_data_key and last_action != "be" and "be_data_cache" in st.session_state:
-        be_data = st.session_state["be_data_cache"]
-    else:
-        be_spinner = "Actualisation Beta & Earnings..." if last_action == "be" else "Beta & Earnings..."
-        with st.spinner(be_spinner):
-            be_data = fetch_be(valid_yf)
-        st.session_state["be_data_cache"] = be_data
+# ── 3. Beta (Yahoo) ───────────────────────────────────────────────────────────
+if not valid_yf:
+    be_data = st.session_state.get("be_data_cache", {})
+elif same_data_key and last_action != "refresh" and "be_data_cache" in st.session_state:
+    be_data = st.session_state["be_data_cache"]
+else:
+    with st.spinner("Actualisation Beta…"):
+        fresh_be = fetch_be(valid_yf)
+    be_data = dict(st.session_state.get("be_data_cache", {}))
+    be_data.update(fresh_be)
+    st.session_state["be_data_cache"] = be_data
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
-if same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
+if not valid_yf:
+    prices = st.session_state.get("prices_data", {})
+elif same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
     prices = st.session_state["prices_data"]
 else:
     prices_spinner = "Actualisation des cours en temps réel…" if last_action == "refresh" else "Cours en temps réel…"
     with st.spinner(prices_spinner):
-        prices = fetch_prices(valid_yf)
+        fresh_prices = fetch_prices(valid_yf)
+    prices = dict(st.session_state.get("prices_data", {}))
+    prices.update(fresh_prices)
     st.session_state["prices_data"] = prices
-
-# ── 5. Sparklines (Yahoo, cache 24h) ─────────────────────────────────────────
-if same_data_key and last_action != "refresh" and "sparklines_data" in st.session_state:
-    sparklines = st.session_state["sparklines_data"]
-else:
-    spark_spinner = "Actualisation des sparklines 52 semaines…" if last_action == "refresh" else "Sparklines 52 semaines…"
-    with st.spinner(spark_spinner):
-        sparklines = fetch_sparklines(valid_yf)
-    st.session_state["sparklines_data"] = sparklines
 
 st.session_state["data_key"] = data_key
 
@@ -1281,9 +1079,9 @@ with clear_col:
 
 st.session_state["global_search"] = global_search
 
-# Construire les rows des deux onglets une seule fois
-rows_pf = build_rows(pf_df, prices, names, be_data, sparklines, False)
-rows_wl = build_rows(wl_df, prices, names, be_data, sparklines, True)
+# Construire les rows des deux vues une seule fois
+rows_pf = build_rows(pf_df, prices, names, be_data, False)
+rows_wl = build_rows(wl_df, prices, names, be_data, True)
 
 # Appliquer la recherche globale
 if global_search:
@@ -1300,26 +1098,9 @@ if global_search:
                 unsafe_allow_html=True)
     render_tab(combined, key="search")
 else:
-    # Vue normale par onglets
-    tab1, tab2, tab3 = st.tabs([
-        f"Portefeuille ({len(pf_df)})",
-        f"Watchlist ({len(wl_df)})",
-        "Debug",
-    ])
-    with tab1:
+    if active_view == "Portefeuille":
         render_tab(rows_pf, key="pf")
-    with tab2:
+    elif active_view == "Watchlist":
         render_tab(rows_wl, key="wl")
-    with tab3:
+    else:
         render_debug(tickers_df, prices, names, be_data)
-
-components.html(
-    f"""
-    <script>
-    setTimeout(function() {{
-        window.parent.location.reload();
-    }}, {AUTO_REFRESH_SEC * 1000});
-    </script>
-    """,
-    height=0,
-)
