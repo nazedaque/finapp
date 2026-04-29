@@ -49,10 +49,10 @@ DISPLAY_COLS = [
     "Statut", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "Ticker": "74px", "Société": "180px", "Qualité": "52px",
-    "Date d'achat": "96px", "JRS": "62px",
+    "MAJ": "84px", "Ticker": "66px", "Société": "180px", "Qualité": "52px",
+    "Date d'achat": "96px", "JRS": "44px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
-    "Score": "44px", "Mixte": "132px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
+    "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
     "Beta": "50px", "Statut": "78px",
     "↗": "36px",
 }
@@ -231,8 +231,17 @@ def _fetch_one_name(t: str) -> tuple[str, str]:
         meta = getattr(tk, "history_metadata", None) or {}
         name = (meta.get("shortName") or meta.get("longName") or "").strip()
         if not name:
-            info = tk.fast_info
-            name = (getattr(info, "shortName", None) or "").strip()
+            try:
+                info = tk.info or {}
+                name = (info.get("shortName") or info.get("longName") or "").strip()
+            except Exception:
+                pass
+        if not name:
+            try:
+                info = tk.fast_info
+                name = (getattr(info, "shortName", None) or "").strip()
+            except Exception:
+                pass
         return t, name
     except Exception:
         return t, ""
@@ -461,13 +470,15 @@ def html_score_mixte(v) -> str:
     except Exception:
         return ""
     value = 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
+    rest = 100 - value
     color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
     return (
-        '<div class="score-spark" title="{:.0f}" '
-        'style="height:14px;width:100%;background:#E3E7EA;border-radius:3px;overflow:hidden;">'
-        '<div class="score-spark-fill" style="height:100%;width:{:.1f}%;background:{};border-radius:3px 0 0 3px;"></div>'
-        '</div>'
-    ).format(score, value, color)
+        '<svg class="score-spark" width="140" height="14" viewBox="0 0 100 10" '
+        'preserveAspectRatio="none" role="img" aria-label="Score {:.0f}">'
+        '<rect x="0" y="0" width="{:.2f}" height="10" fill="{}"></rect>'
+        '<rect x="{:.2f}" y="0" width="{:.2f}" height="10" fill="#E3E7EA"></rect>'
+        '</svg>'
+    ).format(score, value, color, value, rest)
 
 def fmt_purchase_date(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
@@ -479,7 +490,7 @@ def fmt_purchase_date(v) -> str:
 
 def fmt_holding_days(v, required: bool = False) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
-        return "à vérifier" if required else "—"
+        return "N/A" if required else "—"
     try:
         d = pd.to_datetime(v, dayfirst=True, errors="raise").date()
         days = (date.today() - d).days
@@ -487,7 +498,7 @@ def fmt_holding_days(v, required: bool = False) -> str:
             return f'<span style="color:#f97316">{days}</span>'
         return str(days)
     except Exception:
-        return "à vérifier" if required else "—"
+        return "N/A" if required else "—"
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
@@ -671,13 +682,8 @@ CSS = """<style>
   height: 14px;
   width: 100%;
   margin: 0 auto;
-  background: #E3E7EA;
+  display: block;
   border-radius: 3px;
-  overflow: hidden;
-}
-.score-spark-fill {
-  height: 100%;
-  border-radius: 3px 0 0 3px;
 }
 </style>"""
 
@@ -727,7 +733,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
-            "Score ↓", "Ticker A→Z", "Qualité ↓",
+            "Score ↓", "Score ↑", "Ticker A→Z", "Qualité ↓",
             "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
         ], key=f"{key}_t")
     with c2:
@@ -740,6 +746,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     sort_map = {
         "Ticker A→Z":     lambda r: r["_ticker"],
         "Score ↓":        lambda r: -r["_score"],
+        "Score ↑":        lambda r: r["_score"],
         "Qualité ↓":      lambda r: -r["_quality"],
         "Upside ↓":       lambda r: -r["_upside"],
         "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
