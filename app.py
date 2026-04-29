@@ -44,12 +44,12 @@ STATUT_COLOR = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Ticker", "Société", "Qualité", "Prix", "Var %", "Upside",
+    "MAJ", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Beta",
     "Statut", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "Ticker": "66px", "Société": "180px", "Qualité": "52px",
+    "MAJ": "84px", "Ticker": "66px", "Société": "180px", "Qual": "52px",
     "Date d'achat": "96px", "JRS": "44px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
@@ -57,7 +57,7 @@ COL_WIDTHS = {
     "↗": "36px",
 }
 CENTER = {"MAJ", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
-          "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
+          "Buy", "Fair", "Trim", "Exit", "Qual", "Beta",
           "Statut", "↗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -469,7 +469,7 @@ def html_score_mixte(v) -> str:
         score = float(v)
     except Exception:
         return ""
-    value = 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
+    value = 100.0 if score >= 85 else 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
     color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
     return (
         '<div class="score-spark" title="{:.0f}" role="img" aria-label="Score {:.0f}">'
@@ -576,7 +576,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Score":    round(float(score)) if score is not None else "",
                 "Mixte":    score_mixte,
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
-                "Qualité":  int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
+                "Qual":     int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
                 "Beta":     beta,
                 "Statut":   statut,
             },
@@ -586,7 +586,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
             "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
-            "Qualité":  fmt_note(r.get("note")),
+            "Qual":     fmt_note(r.get("note")),
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
@@ -609,7 +609,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "Ticker", "Société", "JRS", "Qualité", "Prix", "Var %",
+    cols = ["MAJ", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
             "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
             "Exit", "Beta", "Statut"]
     ws.append(cols)
@@ -681,7 +681,7 @@ CSS = """<style>
   height: 14px;
   width: 100%;
   margin: 0 auto;
-  background: #cbd3dc;
+  background: #b6c0cb;
   display: block;
   border-radius: 3px;
   overflow: hidden;
@@ -738,7 +738,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
-            "Score ↓", "Score ↑", "Ticker A→Z", "Qualité ↓",
+            "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
             "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
         ], key=f"{key}_t")
     with c2:
@@ -752,7 +752,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
         "Ticker A→Z":     lambda r: r["_ticker"],
         "Score ↓":        lambda r: -r["_score"],
         "Score ↑":        lambda r: r["_score"],
-        "Qualité ↓":      lambda r: -r["_quality"],
+        "Qual ↓":         lambda r: -r["_quality"],
         "Upside ↓":       lambda r: -r["_upside"],
         "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
         "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
@@ -1051,7 +1051,6 @@ def mark_refresh(scope: str) -> None:
 def mark_beta(scope: str) -> None:
     st.session_state["last_action"] = "beta"
     st.session_state["refresh_scope"] = scope
-    fetch_be_cached.clear()
 
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
@@ -1086,10 +1085,13 @@ elif same_data_key and last_action != "beta" and "be_data_cache" in st.session_s
     be_data = st.session_state["be_data_cache"]
 else:
     beta_scope = active_yf if last_action == "beta" else all_yf
-    with st.spinner("Actualisation Beta…"):
-        fresh_be = fetch_be(beta_scope)
     be_data = dict(st.session_state.get("be_data_cache", {}))
-    be_data.update(fresh_be)
+    if last_action == "beta":
+        beta_scope = tuple(t for t in beta_scope if be_data.get(t, {}).get("beta") is None)
+    if beta_scope:
+        with st.spinner("Actualisation Beta…"):
+            fresh_be = fetch_be(beta_scope)
+        be_data.update(fresh_be)
     st.session_state["be_data_cache"] = be_data
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
