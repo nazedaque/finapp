@@ -49,14 +49,14 @@ DISPLAY_COLS = [
     "Statut", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "92px", "Ticker": "82px", "Société": "210px", "Qualité": "58px",
-    "Date d'achat": "96px",
-    "Prix": "78px", "Var %": "80px", "Upside": "72px",
-    "Score": "52px", "Mixte": "88px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
-    "Beta": "56px", "Statut": "90px",
+    "MAJ": "84px", "Ticker": "74px", "Société": "180px", "Qualité": "52px",
+    "Date d'achat": "96px", "JRS": "62px",
+    "Prix": "70px", "Var %": "70px", "Upside": "66px",
+    "Score": "44px", "Mixte": "132px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
+    "Beta": "50px", "Statut": "78px",
     "↗": "36px",
 }
-CENTER = {"MAJ", "Date d'achat", "Prix", "Var %", "Upside", "Score", "Mixte",
+CENTER = {"MAJ", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
           "Statut", "↗"}
 
@@ -463,8 +463,9 @@ def html_score_mixte(v) -> str:
     value = 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
     color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
     return (
-        '<div class="score-spark" title="{:.0f}">'
-        '<div class="score-spark-fill" style="width:{:.1f}%;background:{}"></div>'
+        '<div class="score-spark" title="{:.0f}" '
+        'style="height:14px;width:100%;background:#E3E7EA;border-radius:3px;overflow:hidden;">'
+        '<div class="score-spark-fill" style="height:100%;width:{:.1f}%;background:{};border-radius:3px 0 0 3px;"></div>'
         '</div>'
     ).format(score, value, color)
 
@@ -475,6 +476,18 @@ def fmt_purchase_date(v) -> str:
         return pd.to_datetime(v, dayfirst=True, errors="raise").date().strftime("%d-%m-%Y")
     except Exception:
         return str(v).strip()
+
+def fmt_holding_days(v, required: bool = False) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
+        return "à vérifier" if required else "—"
+    try:
+        d = pd.to_datetime(v, dayfirst=True, errors="raise").date()
+        days = (date.today() - d).days
+        if 150 <= days <= 180:
+            return f'<span style="color:#f97316">{days}</span>'
+        return str(days)
+    except Exception:
+        return "à vérifier" if required else "—"
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
@@ -497,7 +510,8 @@ def html_link(url) -> str:
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
                names: dict, be_data: dict,
-               highlight_radar: bool = False) -> list[dict]:
+               highlight_radar: bool = False,
+               holding_required: bool = False) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
         yf_t   = r.get("yf_ticker")
@@ -547,6 +561,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
+                "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(float(score)) if score is not None else "",
                 "Mixte":    score_mixte,
@@ -560,6 +575,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
+            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
             "Qualité":  fmt_note(r.get("note")),
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
@@ -583,7 +599,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "Ticker", "Société", "Qualité", "Prix", "Var %",
+    cols = ["MAJ", "Ticker", "Société", "JRS", "Qualité", "Prix", "Var %",
             "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
             "Exit", "Beta", "Statut"]
     ws.append(cols)
@@ -652,8 +668,8 @@ CSS = """<style>
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
 .score-spark {
-  height: 12px;
-  width: 68px;
+  height: 14px;
+  width: 100%;
   margin: 0 auto;
   background: #E3E7EA;
   border-radius: 3px;
@@ -671,10 +687,18 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
     colgroup = "<colgroup>" + "".join(
         f'<col style="width:{COL_WIDTHS.get(c,"auto")}">' for c in cols
     ) + "</colgroup>"
-    th = "".join(
-        f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>'
-        for c in cols
-    )
+    th_parts = []
+    skip_next = False
+    for idx, c in enumerate(cols):
+        if skip_next:
+            skip_next = False
+            continue
+        if c == "Score" and idx + 1 < len(cols) and cols[idx + 1] == "Mixte":
+            th_parts.append('<th class="c" colspan="2" title="Score">Score</th>')
+            skip_next = True
+        else:
+            th_parts.append(f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>')
+    th = "".join(th_parts)
     trs = []
     for r in rows:
         if r["_flagged"]:
@@ -1123,8 +1147,8 @@ with clear_col:
 st.session_state["global_search"] = global_search
 
 # Construire les rows des deux vues une seule fois
-rows_pf = build_rows(pf_df, prices, names, be_data, False)
-rows_wl = build_rows(wl_df, prices, names, be_data, True)
+rows_pf = build_rows(pf_df, prices, names, be_data, False, True)
+rows_wl = build_rows(wl_df, prices, names, be_data, False, False)
 
 # Appliquer la recherche globale
 if global_search:
@@ -1146,7 +1170,8 @@ else:
         f"Watchlist ({len(wl_df)})",
         "Debug",
     ])
-    pf_cols = DISPLAY_COLS[:3] + ["Date d'achat"] + DISPLAY_COLS[3:]
+    pf_cols = DISPLAY_COLS[:3] + ["JRS"] + DISPLAY_COLS[3:]
+    wl_cols = DISPLAY_COLS[:3] + ["JRS"] + DISPLAY_COLS[3:]
     with tab1:
         b1, b2 = st.columns([1, 1])
         with b1:
@@ -1160,6 +1185,6 @@ else:
             st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
         with b2:
             st.button("Beta", key="beta_wl", use_container_width=True, on_click=mark_beta, args=("wl",))
-        render_tab(rows_wl, key="wl")
+        render_tab(rows_wl, key="wl", display_cols=wl_cols)
     with tab3:
         render_debug(tickers_df, prices, names, be_data)
