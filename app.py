@@ -633,8 +633,8 @@ def export_xlsx(rows: list[dict]) -> bytes:
 CSS = """<style>
 .wl-wrap {
   overflow-x: auto;
-  max-height: 70vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow-y: visible;
   border-radius: 12px;
   border: 1px solid #252d3d;
   background: #141824;
