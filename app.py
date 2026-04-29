@@ -543,11 +543,13 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         if score is None and pd.notna(r.get("score_sheet")):
             score = r.get("score_sheet")
         score_mixte = r.get("score_sheet")
+        if score_mixte is None or (isinstance(score_mixte, float) and pd.isna(score_mixte)):
+            score_mixte = score
         upside  = compute_upside(price, fair, trim)
         beta    = be.get("beta")
 
         gf = str(r["gf_ticker"])
-        name_html = name_u if name_u else f'<span style="color:#475569;font-style:italic">{gf}</span>'
+        name_html = name_u if name_u else gf
 
         # Mise en surbrillance "sous le radar"
         radar   = (highlight_radar and score is not None and float(score) >= 85)
