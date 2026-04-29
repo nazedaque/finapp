@@ -30,6 +30,7 @@ NAME_TTL          = 7 * 86_400
 BE_TTL            = 86_400
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
+YF_BETA_BATCH_SIZE = 50
 YF_BATCH_PAUSE_SEC = 0.2
 
 STATUT_ORDER = {"Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9}
@@ -43,18 +44,19 @@ STATUT_COLOR = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Ticker", "Société", "Prix", "Var %", "Upside",
-    "Score", "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
+    "MAJ", "Ticker", "Société", "Qualité", "Prix", "Var %", "Upside",
+    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Beta",
     "Statut", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "92px", "Ticker": "82px", "Société": "210px",
+    "MAJ": "92px", "Ticker": "82px", "Société": "210px", "Qualité": "58px",
+    "Date d'achat": "96px",
     "Prix": "78px", "Var %": "80px", "Upside": "72px",
-    "Score": "52px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
-    "Qualité": "58px", "Beta": "56px", "Statut": "90px",
+    "Score": "52px", "Mixte": "88px", "Buy": "74px", "Fair": "74px", "Trim": "74px", "Exit": "74px",
+    "Beta": "56px", "Statut": "90px",
     "↗": "36px",
 }
-CENTER = {"MAJ", "Prix", "Var %", "Upside", "Score",
+CENTER = {"MAJ", "Date d'achat", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qualité", "Beta",
           "Statut", "↗"}
 
@@ -95,6 +97,9 @@ SHEET_COL_NORMALIZED = {
     "ticker":      "gf_ticker",
     "societe":     "name",
     "portif":      "portif",
+    "date d'achat": "purchase_date",
+    "date d achat": "purchase_date",
+    "verif":       "verif",
     "note":        "note",
     "buy":         "buy",
     "fair":        "fair",
@@ -105,6 +110,7 @@ SHEET_COL_NORMALIZED = {
     "score mixte": "score_sheet",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
+    "yf_ticker":   "yf_ticker",
 }
 NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
 
@@ -154,11 +160,15 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         if col not in df.columns:
             df[col] = pd.NA
 
+    # Le nouveau sheet utilise yf_ticker comme ticker principal.
+    if df["gf_ticker"].isna().all() and "yf_ticker" in df.columns:
+        df["gf_ticker"] = df["yf_ticker"]
+
     # Si gf_ticker est toujours vide, essai positionnel (col C = index 2)
     if df["gf_ticker"].isna().all() and len(df.columns) > 2:
         candidate = df.iloc[:, 2].dropna().astype(str)
         # Vérifier que ça ressemble à des tickers (pas de valeurs numériques pures)
-        looks_like_tickers = candidate.str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
+        looks_like_tickers = candidate.str.upper().str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
@@ -188,7 +198,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             df[col] = df[col].apply(parse_num)
     if "last_update" in df.columns:
         df["last_update"] = pd.to_datetime(
-            df["last_update"], format="%d/%m/%Y", errors="coerce").dt.date
+            df["last_update"], dayfirst=True, errors="coerce").dt.date
     else:
         df["last_update"] = None
 
@@ -287,9 +297,9 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     results: dict[str, dict] = {}
     empty = {"beta": None}
     tickers = list(yf_tickers)
-    for i in range(0, len(tickers), YF_META_BATCH_SIZE):
-        batch = tickers[i: i + YF_META_BATCH_SIZE]
-        with ThreadPoolExecutor(max_workers=8) as executor:
+    for i in range(0, len(tickers), YF_BETA_BATCH_SIZE):
+        batch = tickers[i: i + YF_BETA_BATCH_SIZE]
+        with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(fetch_be_cached, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
                 try:
@@ -297,7 +307,7 @@ def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
                     results[t] = future.result(timeout=15)
                 except Exception:
                     results[futures[future]] = dict(empty)
-        if i + YF_META_BATCH_SIZE < len(tickers):
+        if i + YF_BETA_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
     st.session_state["be_debug"] = [
         {
@@ -439,19 +449,32 @@ def html_upside(v) -> str:
     return f"{a}{v:.1f}%"
 
 def html_statut(statut) -> str:
-    cfg = {
-        "Strong buy": ("#22c55e", "rgba(34,197,94,.15)"),
-        "Buy":        ("#86efac", "rgba(134,239,172,.12)"),
-        "Fair":       ("#fbbf24", "rgba(251,191,36,.12)"),
-        "Trim":       ("#f97316", "rgba(249,115,22,.12)"),
-        "Exit":       ("#ef4444", "rgba(239,68,68,.12)"),
-    }
-    color, bg = cfg.get(statut, ("#4a5980", "transparent"))
     if not statut:
-        return '<span style="color:#4a5980">—</span>'
-    return (f'<span style="color:{color};background:{bg};'
-            f'padding:2px 8px;border-radius:20px;font-size:.75rem;'
-            f'font-weight:600;white-space:nowrap">{statut}</span>')
+        return "—"
+    return str(statut)
+
+def html_score_mixte(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    try:
+        score = float(v)
+    except Exception:
+        return ""
+    value = 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
+    color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
+    return (
+        '<div class="score-spark" title="{:.0f}">'
+        '<div class="score-spark-fill" style="width:{:.1f}%;background:{}"></div>'
+        '</div>'
+    ).format(score, value, color)
+
+def fmt_purchase_date(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
+        return "à vérifier"
+    try:
+        return pd.to_datetime(v, dayfirst=True, errors="raise").date().strftime("%d-%m-%Y")
+    except Exception:
+        return str(v).strip()
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
@@ -494,6 +517,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score   = compute_score(ratio, r.get("note"))
         if score is None and pd.notna(r.get("score_sheet")):
             score = r.get("score_sheet")
+        score_mixte = r.get("score_sheet")
         upside  = compute_upside(price, fair, trim)
         beta    = be.get("beta")
 
@@ -511,6 +535,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_maj":          r.get("last_update"),
             "_upside":       upside if upside is not None else -999.0,
             "_beta":         float(beta) if beta is not None else None,
+            "_quality":      float(r.get("note")) if r.get("note") is not None and pd.notna(r.get("note")) else -1.0,
             "_price_ok":     price is not None,
             "_ticker":       gf,
             "_name":         name,
@@ -521,8 +546,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "Ticker":   gf, "Société": name_u,
+                "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(float(score)) if score is not None else "",
+                "Mixte":    score_mixte,
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
                 "Qualité":  int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
                 "Beta":     beta,
@@ -532,15 +559,17 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "MAJ":      fmt_maj(r.get("last_update")),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
+            "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
+            "Qualité":  fmt_note(r.get("note")),
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
+            "Mixte":    html_score_mixte(score_mixte),
             "Buy":      fmt_price(buy),
             "Fair":     fmt_price(fair),
             "Trim":     fmt_price(trim),
             "Exit":     fmt_price(exit_),
-            "Qualité":  fmt_note(r.get("note")),
             "Beta":     fmt_beta(beta),
             "Statut":   html_statut(statut),
             "↗":        html_link(r.get("url")),
@@ -554,9 +583,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "Ticker", "Société", "Prix", "Var %", "Upside %",
-            "Score", "Buy", "Fair", "Trim", "Exit",
-            "Qualité", "Beta", "Statut"]
+    cols = ["MAJ", "Ticker", "Société", "Qualité", "Prix", "Var %",
+            "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
+            "Exit", "Beta", "Statut"]
     ws.append(cols)
     for r in rows:
         raw = r["_raw"]
@@ -622,16 +651,29 @@ CSS = """<style>
 .wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
+.score-spark {
+  height: 12px;
+  width: 68px;
+  margin: 0 auto;
+  background: #E3E7EA;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.score-spark-fill {
+  height: 100%;
+  border-radius: 3px 0 0 3px;
+}
 </style>"""
 
-def render_table(rows: list[dict]) -> None:
+def render_table(rows: list[dict], display_cols: list[str] | None = None) -> None:
     if not rows: st.info("Aucun titre."); return
+    cols = display_cols or DISPLAY_COLS
     colgroup = "<colgroup>" + "".join(
-        f'<col style="width:{COL_WIDTHS.get(c,"auto")}">' for c in DISPLAY_COLS
+        f'<col style="width:{COL_WIDTHS.get(c,"auto")}">' for c in cols
     ) + "</colgroup>"
     th = "".join(
         f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>'
-        for c in DISPLAY_COLS
+        for c in cols
     )
     trs = []
     for r in rows:
@@ -643,7 +685,7 @@ def render_table(rows: list[dict]) -> None:
             cls = ""
         tds = "".join(
             f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
-            for c in DISPLAY_COLS
+            for c in cols
         )
         trs.append(f'<tr class="{cls}">{tds}</tr>')
     st.markdown(
@@ -657,11 +699,11 @@ def render_table(rows: list[dict]) -> None:
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(rows: list[dict], key: str) -> None:
+def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None) -> None:
     c1, c2 = st.columns([1, 1])
     with c1:
         sort_choice = st.selectbox("Tri", [
-            "Statut + Score", "Ticker A→Z", "Score ↓", "Qualité ↓",
+            "Score ↓", "Ticker A→Z", "Qualité ↓",
             "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
         ], key=f"{key}_t")
     with c2:
@@ -672,10 +714,9 @@ def render_tab(rows: list[dict], key: str) -> None:
         rows = [r for r in rows if r["_statut"] == sf]
 
     sort_map = {
-        "Statut + Score": lambda r: (r["_statut_order"], -r["_score"]),
         "Ticker A→Z":     lambda r: r["_ticker"],
         "Score ↓":        lambda r: -r["_score"],
-        "Qualité ↓":      lambda r: -r["_score"],
+        "Qualité ↓":      lambda r: -r["_quality"],
         "Upside ↓":       lambda r: -r["_upside"],
         "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
         "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
@@ -686,7 +727,7 @@ def render_tab(rows: list[dict], key: str) -> None:
     if key_fn:
         rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
 
-    render_table(rows)
+    render_table(rows, display_cols)
 
     missing = [r["_ticker"] for r in rows if not r["_price_ok"]]
     if missing:
@@ -959,70 +1000,72 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 # Affichage initial (avant fetch)
 render_topbar(len(pf_df), len(wl_df), last_ts)
 
-# ── Vue active ────────────────────────────────────────────────────────────────
-active_view = st.radio(
-    "Vue",
-    ["Portefeuille", "Watchlist", "Debug"],
-    horizontal=True,
-    key="active_view",
-    label_visibility="collapsed",
-)
-active_df = pf_df if active_view == "Portefeuille" else wl_df if active_view == "Watchlist" else tickers_df
-valid_yf = (
-    tuple(str(t) for t in active_df["yf_ticker"].dropna() if str(t).strip())
-    if active_view != "Debug"
-    else tuple()
-)
+def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
+    return tuple(str(t) for t in df["yf_ticker"].dropna() if str(t).strip())
 
-if st.button("Actualiser", use_container_width=True, disabled=(active_view == "Debug")):
+pf_yf = tickers_for(pf_df)
+wl_yf = tickers_for(wl_df)
+all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf)))
+
+def mark_refresh(scope: str) -> None:
     st.session_state["last_action"] = "refresh"
+    st.session_state["refresh_scope"] = scope
     fetch_prices.clear()
+
+def mark_beta(scope: str) -> None:
+    st.session_state["last_action"] = "beta"
+    st.session_state["refresh_scope"] = scope
     fetch_be_cached.clear()
-    st.rerun()
+
+last_action = st.session_state.pop("last_action", "")
+refresh_scope = st.session_state.pop("refresh_scope", "")
+active_yf = pf_yf if refresh_scope == "pf" else wl_yf if refresh_scope == "wl" else all_yf
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
-last_action = st.session_state.pop("last_action", "")
-data_key = valid_yf
+data_key = all_yf
 same_data_key = st.session_state.get("data_key") == data_key
 cached_names = st.session_state.get("names_data", {})
-missing_name_tickers = tuple(t for t in valid_yf if not cached_names.get(t))
+name_scope = active_yf if last_action == "refresh" else all_yf
+missing_name_tickers = tuple(t for t in name_scope if not cached_names.get(t))
 
-if not valid_yf:
+if not all_yf:
     names = cached_names
 elif same_data_key and last_action != "refresh" and "names_data" in st.session_state:
     names = st.session_state["names_data"]
 elif last_action == "refresh":
-    names = {t: cached_names.get(t, "") for t in valid_yf}
+    names = dict(cached_names)
     if missing_name_tickers:
         with st.spinner("Noms des nouveaux tickers…"):
             names.update(fetch_names(missing_name_tickers))
     st.session_state["names_data"] = names
 else:
     with st.spinner("Noms des sociétés…"):
-        names = fetch_names(valid_yf)
+        names = fetch_names(all_yf)
     st.session_state["names_data"] = names
 
 # ── 3. Beta (Yahoo) ───────────────────────────────────────────────────────────
-if not valid_yf:
+if not all_yf:
     be_data = st.session_state.get("be_data_cache", {})
-elif same_data_key and last_action != "refresh" and "be_data_cache" in st.session_state:
+elif same_data_key and last_action != "beta" and "be_data_cache" in st.session_state:
     be_data = st.session_state["be_data_cache"]
 else:
+    beta_scope = active_yf if last_action == "beta" else all_yf
     with st.spinner("Actualisation Beta…"):
-        fresh_be = fetch_be(valid_yf)
+        fresh_be = fetch_be(beta_scope)
     be_data = dict(st.session_state.get("be_data_cache", {}))
     be_data.update(fresh_be)
     st.session_state["be_data_cache"] = be_data
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
-if not valid_yf:
+if not all_yf:
     prices = st.session_state.get("prices_data", {})
 elif same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
     prices = st.session_state["prices_data"]
 else:
+    price_scope = active_yf if last_action == "refresh" else all_yf
     prices_spinner = "Actualisation des cours en temps réel…" if last_action == "refresh" else "Cours en temps réel…"
     with st.spinner(prices_spinner):
-        fresh_prices = fetch_prices(valid_yf)
+        fresh_prices = fetch_prices(price_scope)
     prices = dict(st.session_state.get("prices_data", {}))
     prices.update(fresh_prices)
     st.session_state["prices_data"] = prices
@@ -1031,11 +1074,11 @@ st.session_state["data_key"] = data_key
 
 st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
-ok = sum(1 for t in valid_yf if prices.get(t, {}).get("price") is not None)
+ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 
 # Mise à jour du topbar avec les prix récupérés
 render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
-              ok=ok, total=len(valid_yf))
+              ok=ok, total=len(all_yf))
 
 # ── Recherche globale ──────────────────────────────────────────────────────────
 # Auto-sélection du texte dans tous les champs texte
@@ -1098,9 +1141,25 @@ if global_search:
                 unsafe_allow_html=True)
     render_tab(combined, key="search")
 else:
-    if active_view == "Portefeuille":
-        render_tab(rows_pf, key="pf")
-    elif active_view == "Watchlist":
+    tab1, tab2, tab3 = st.tabs([
+        f"Portefeuille ({len(pf_df)})",
+        f"Watchlist ({len(wl_df)})",
+        "Debug",
+    ])
+    pf_cols = DISPLAY_COLS[:3] + ["Date d'achat"] + DISPLAY_COLS[3:]
+    with tab1:
+        b1, b2 = st.columns([1, 1])
+        with b1:
+            st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
+        with b2:
+            st.button("Beta", key="beta_pf", use_container_width=True, on_click=mark_beta, args=("pf",))
+        render_tab(rows_pf, key="pf", display_cols=pf_cols)
+    with tab2:
+        b1, b2 = st.columns([1, 1])
+        with b1:
+            st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
+        with b2:
+            st.button("Beta", key="beta_wl", use_container_width=True, on_click=mark_beta, args=("wl",))
         render_tab(rows_wl, key="wl")
-    else:
+    with tab3:
         render_debug(tickers_df, prices, names, be_data)
