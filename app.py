@@ -44,19 +44,19 @@ STATUT_COLOR = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "MAJ", "V", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Beta",
     "Statut", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "Ticker": "66px", "Société": "180px", "Qual": "52px",
+    "MAJ": "84px", "V": "34px", "Ticker": "58px", "Société": "180px", "Qual": "52px",
     "Date d'achat": "96px", "JRS": "44px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
     "Beta": "50px", "Statut": "78px",
     "↗": "36px",
 }
-CENTER = {"MAJ", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
+CENTER = {"MAJ", "V", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual", "Beta",
           "Statut", "↗"}
 
@@ -100,6 +100,7 @@ SHEET_COL_NORMALIZED = {
     "date d'achat": "purchase_date",
     "date d achat": "purchase_date",
     "verif":       "verif",
+    "v":           "verif",
     "note":        "note",
     "buy":         "buy",
     "fair":        "fair",
@@ -172,9 +173,8 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
-    # Colonne A = case à cocher (TRUE/FALSE) — lue par position avant tout renommage
-    df["flagged"] = df.iloc[:, 0].apply(
-        lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
+    df["flagged"] = df["verif"].apply(
+        lambda v: str(v).strip().upper() in ("V", "TRUE", "1", "VRAI")
     )
 
     # Nettoyage
@@ -569,6 +569,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
+                "V":        "V" if flagged else "",
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
@@ -582,6 +583,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             },
             # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
+            "V":        "V" if flagged else "",
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
@@ -609,7 +611,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
+    cols = ["MAJ", "V", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
             "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
             "Exit", "Beta", "Statut"]
     ws.append(cols)
@@ -1184,8 +1186,8 @@ else:
         f"Watchlist ({len(wl_df)})",
         "Debug",
     ])
-    pf_cols = DISPLAY_COLS[:3] + ["JRS"] + DISPLAY_COLS[3:]
-    wl_cols = DISPLAY_COLS[:3] + ["JRS"] + DISPLAY_COLS[3:]
+    pf_cols = DISPLAY_COLS[:4] + ["JRS"] + DISPLAY_COLS[4:]
+    wl_cols = DISPLAY_COLS[:4] + ["JRS"] + DISPLAY_COLS[4:]
     with tab1:
         b1, b2 = st.columns([1, 1])
         with b1:
