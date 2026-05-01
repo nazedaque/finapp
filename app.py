@@ -173,9 +173,8 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         if looks_like_tickers:
             df["gf_ticker"] = df.iloc[:, 2]
 
-    df["flagged"] = df["verif"].apply(
-        lambda v: str(v).strip().upper() in ("V", "TRUE", "1", "VRAI")
-    )
+    df["verif_display"] = df["verif"].apply(fmt_verif)
+    df["flagged"] = df["verif_display"].astype(bool)
 
     # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
@@ -462,6 +461,17 @@ def html_statut(statut) -> str:
         return "—"
     return str(statut)
 
+def fmt_verif(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ""
+    n = parse_num(s)
+    if n is not None:
+        return f"{n:g}"
+    return s
+
 def html_score_mixte(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return ""
@@ -569,7 +579,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
-                "V":        "V" if flagged else "",
+                "V":        r.get("verif_display", ""),
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
@@ -583,7 +593,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             },
             # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
-            "V":        "V" if flagged else "",
+            "V":        r.get("verif_display", ""),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
