@@ -1103,6 +1103,8 @@ else:
     if last_action == "beta":
         beta_scope = tuple(t for t in beta_scope if be_data.get(t, {}).get("beta") is None)
     if beta_scope:
+        if last_action == "beta":
+            fetch_be_cached.clear()
         with st.spinner("Actualisation Beta…"):
             fresh_be = fetch_be(beta_scope)
         be_data.update(fresh_be)
