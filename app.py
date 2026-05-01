@@ -174,7 +174,9 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             df["gf_ticker"] = df.iloc[:, 2]
 
     df["verif_display"] = df["verif"].apply(fmt_verif)
-    df["flagged"] = df["verif_display"].astype(bool)
+    df["flagged"] = df.iloc[:, 0].apply(
+        lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
+    )
 
     # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
