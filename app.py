@@ -410,6 +410,19 @@ def compute_upside(price, fair, trim) -> float | None:
         return (target - float(price)) / float(price) * 100
     except Exception: return None
 
+def safe_float(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
+    try:
+        return float(v)
+    except Exception:
+        return None
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Formatage HTML
 # ══════════════════════════════════════════════════════════════════════════════
@@ -548,30 +561,31 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
         statut  = compute_statut(price, buy, fair, trim, exit_)
         ratio   = compute_ratio(price, buy, exit_)
-        score   = compute_score(ratio, r.get("note"))
-        if score is None and pd.notna(r.get("score_sheet")):
-            score = r.get("score_sheet")
-        score_mixte = r.get("score_sheet")
-        if score_mixte is None or (isinstance(score_mixte, float) and pd.isna(score_mixte)):
-            score_mixte = score
+        score   = safe_float(compute_score(ratio, r.get("note")))
+        score_sheet = safe_float(r.get("score_sheet"))
+        if score is None:
+            score = score_sheet
+        score_mixte = score_sheet if score_sheet is not None else score
         upside  = compute_upside(price, fair, trim)
         beta    = be.get("beta")
+        beta_num = safe_float(beta)
+        quality = safe_float(r.get("note"))
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
 
         # Mise en surbrillance "sous le radar"
-        radar   = (highlight_radar and score is not None and float(score) >= 85)
+        radar   = (highlight_radar and score is not None and score >= 85)
         flagged = bool(r.get("flagged", False))
 
         rows.append({
             "_statut_order": STATUT_ORDER.get(statut, 9),
-            "_score":        float(score) if score is not None else -1.0,
+            "_score":        score if score is not None else -1.0,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
             "_upside":       upside if upside is not None else -999.0,
-            "_beta":         float(beta) if beta is not None else None,
-            "_quality":      float(r.get("note")) if r.get("note") is not None and pd.notna(r.get("note")) else -1.0,
+            "_beta":         beta_num,
+            "_quality":      quality if quality is not None else -1.0,
             "_price_ok":     price is not None,
             "_ticker":       gf,
             "_name":         name,
@@ -586,10 +600,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
                 "Prix":     price, "Var %": chg, "Upside %": upside,
-                "Score":    round(float(score)) if score is not None else "",
+                "Score":    round(score) if score is not None else "",
                 "Mixte":    score_mixte,
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
-                "Qual":     int(float(r["note"])) if r.get("note") and pd.notna(r["note"]) else "",
+                "Qual":     int(quality) if quality is not None else "",
                 "Beta":     beta,
                 "Statut":   statut,
             },
