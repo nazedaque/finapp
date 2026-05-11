@@ -9,7 +9,6 @@ from datetime import date, datetime, timezone
 import openpyxl
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -30,35 +29,27 @@ NAME_TTL          = 7 * 86_400
 BE_TTL            = 86_400
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
-YF_BETA_BATCH_SIZE = 50
+YF_INFO_BATCH_SIZE = 50
 YF_BATCH_PAUSE_SEC = 0.2
-
-STATUT_ORDER = {"Strong buy": 0, "Buy": 1, "Fair": 2, "Trim": 3, "Exit": 4, "": 9}
-STATUT_COLOR = {
-    "Strong buy": "#1f8b4c", "Buy": "#6dbf4b", "Fair": "#d4b000",
-    "Trim": "#e67e22",       "Exit": "#c0392b", "": "#64748b",
-}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Colonnes & layout — identiques entre onglets
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "V", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Beta",
-    "Statut", "↗",
+    "MAJ", "V", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Industry", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "V": "34px", "Ticker": "58px", "Société": "180px", "Qual": "52px",
+    "MAJ": "84px", "V": "34px", "Pays": "42px", "Ticker": "58px", "Société": "180px", "Qual": "52px",
     "Date d'achat": "96px", "JRS": "44px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
-    "Beta": "50px", "Statut": "78px",
+    "Industry": "150px",
     "↗": "36px",
 }
-CENTER = {"MAJ", "V", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
-          "Buy", "Fair", "Trim", "Exit", "Qual", "Beta",
-          "Statut", "↗"}
+CENTER = {"MAJ", "V", "Pays", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
+          "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -221,7 +212,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Métadonnées (nom, beta) — parallèle, cache 24h
+# Métadonnées (nom, industry) — parallèle, cache 24h
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _fetch_one_name(t: str) -> tuple[str, str]:
@@ -270,65 +261,40 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return names
 
-def _fetch_one_be(t: str) -> tuple[str, dict]:
-    """Récupère beta — plus lent, via .info."""
-    result: dict = {
-        "beta": None,
-        "_diag": [],
-        "_beta_fields": {"beta": None},
-    }
+def _fetch_one_industry(t: str) -> tuple[str, str]:
+    """Récupère industry, fallback sector, via .info."""
     try:
         tk = yf.Ticker(t)
-        info = {}
         try:
             info = tk.info or {}
-            result["_beta_fields"] = {
-                "beta": info.get("beta"),
-            }
-            b = info.get("beta")
-            if b is not None:
-                result["beta"] = float(b)
-                result["_diag"].append("beta:info")
-            else:
-                result["_diag"].append("beta:missing")
+            industry = (info.get("industry") or info.get("sector") or "").strip()
+            return t, industry
         except Exception:
-            result["_diag"].append("beta:info_error")
+            return t, ""
     except Exception:
-        result["_diag"].append("ticker:init_error")
-    return t, result
+        return t, ""
 
 @st.cache_data(ttl=BE_TTL, show_spinner=False)
-def fetch_be_cached(ticker: str) -> dict:
-    return _fetch_one_be(ticker)[1]
+def fetch_industry_cached(ticker: str) -> str:
+    return _fetch_one_industry(ticker)[1]
 
-def fetch_be(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    """Beta — déclenchement via Actualiser."""
+def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
+    """Industry — cache par ticker."""
     import time
-    results: dict[str, dict] = {}
-    empty = {"beta": None}
+    results: dict[str, str] = {}
     tickers = list(yf_tickers)
-    for i in range(0, len(tickers), YF_BETA_BATCH_SIZE):
-        batch = tickers[i: i + YF_BETA_BATCH_SIZE]
+    for i in range(0, len(tickers), YF_INFO_BATCH_SIZE):
+        batch = tickers[i: i + YF_INFO_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(fetch_be_cached, t): t for t in batch}
+            futures = {executor.submit(fetch_industry_cached, t): t for t in batch}
             for future in as_completed(futures, timeout=60):
                 try:
                     t = futures[future]
                     results[t] = future.result(timeout=15)
                 except Exception:
-                    results[futures[future]] = dict(empty)
-        if i + YF_BETA_BATCH_SIZE < len(tickers):
+                    results[futures[future]] = ""
+        if i + YF_INFO_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
-    st.session_state["be_debug"] = [
-        {
-            "ticker": t,
-            "beta": data.get("beta"),
-            "beta_raw": data.get("_beta_fields", {}).get("beta"),
-            "diag": ", ".join(data.get("_diag", [])),
-        }
-        for t, data in results.items()
-        if data.get("beta") is None
-    ]
     return results
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -382,16 +348,6 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
 # Calculs métier
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_statut(price, buy, fair, trim, exit_) -> str:
-    if any(v is None or (isinstance(v, float) and pd.isna(v))
-           for v in [price, buy, fair, trim, exit_]): return ""
-    p, b, f, k, e = float(price), float(buy), float(fair), float(trim), float(exit_)
-    if p <= b: return "Strong buy"
-    if p <= f: return "Buy"
-    if p <= k: return "Fair"
-    if p <= e: return "Trim"
-    return "Exit"
-
 def compute_ratio(price, buy, exit_) -> float | None:
     try:
         p, b, e = float(price), float(buy), float(exit_)
@@ -439,10 +395,6 @@ def fmt_score(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(round(float(v)))
 
-def fmt_beta(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    return f"{float(v):.2f}"
-
 def fmt_maj(maj_date) -> str:
     """
     MAJ rouge si la mise à jour a plus de 30 jours.
@@ -470,11 +422,6 @@ def html_upside(v) -> str:
         return "—"
     a = "+" if v >= 0 else ""
     return f"{a}{v:.1f}%"
-
-def html_statut(statut) -> str:
-    if not statut:
-        return "—"
-    return str(statut)
 
 def fmt_verif(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -537,12 +484,25 @@ def html_link(url) -> str:
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
             f'text-decoration:none;font-family:monospace">↗</a>')
 
+COUNTRY_FLAGS = {
+    ".AS": "🇳🇱", ".BR": "🇧🇪", ".DE": "🇩🇪", ".HK": "🇭🇰",
+    ".L": "🇬🇧", ".MC": "🇪🇸", ".PA": "🇫🇷", ".SI": "🇸🇬",
+    ".ST": "🇸🇪", ".T": "🇯🇵", ".TO": "🇨🇦", ".WA": "🇵🇱",
+}
+
+def country_flag(ticker: str) -> str:
+    t = str(ticker or "").upper().strip()
+    for suffix, flag in sorted(COUNTRY_FLAGS.items(), key=lambda item: len(item[0]), reverse=True):
+        if t.endswith(suffix):
+            return flag
+    return "🇺🇸" if t else ""
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
-               names: dict, be_data: dict,
+               names: dict, industries: dict,
                highlight_radar: bool = False,
                holding_required: bool = False) -> list[dict]:
     rows = []
@@ -550,7 +510,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         yf_t   = r.get("yf_ticker")
         yf_s   = str(yf_t) if pd.notna(yf_t) else ""
         q      = prices.get(yf_s, {})
-        be     = be_data.get(yf_s, {})
 
         price  = q.get("price") or (r.get("spot_sheet") if pd.notna(r.get("spot_sheet")) else None)
         chg    = q.get("chg")
@@ -559,7 +518,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
-        statut  = compute_statut(price, buy, fair, trim, exit_)
         ratio   = compute_ratio(price, buy, exit_)
         score   = safe_float(compute_score(ratio, r.get("note")))
         score_sheet = safe_float(r.get("score_sheet"))
@@ -567,9 +525,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             score = score_sheet
         score_mixte = score_sheet if score_sheet is not None else score
         upside  = compute_upside(price, fair, trim)
-        beta    = be.get("beta")
-        beta_num = safe_float(beta)
         quality = safe_float(r.get("note"))
+        industry = industries.get(yf_s, "")
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
@@ -579,23 +536,21 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         flagged = bool(r.get("flagged", False))
 
         rows.append({
-            "_statut_order": STATUT_ORDER.get(statut, 9),
             "_score":        score if score is not None else -1.0,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
             "_upside":       upside if upside is not None else -999.0,
-            "_beta":         beta_num,
             "_quality":      quality if quality is not None else -1.0,
             "_price_ok":     price is not None,
             "_ticker":       gf,
             "_name":         name,
-            "_statut":       statut,
             "_radar":        radar,
             "_flagged":      flagged,
             # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "V":        r.get("verif_display", ""),
+                "Pays":     country_flag(yf_s),
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
@@ -604,12 +559,12 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Mixte":    score_mixte,
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
                 "Qual":     int(quality) if quality is not None else "",
-                "Beta":     beta,
-                "Statut":   statut,
+                "Industry": industry,
             },
             # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
             "V":        r.get("verif_display", ""),
+            "Pays":     country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
@@ -624,8 +579,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_price(fair),
             "Trim":     fmt_price(trim),
             "Exit":     fmt_price(exit_),
-            "Beta":     fmt_beta(beta),
-            "Statut":   html_statut(statut),
+            "Industry": industry,
             "↗":        html_link(r.get("url")),
         })
     return rows
@@ -637,9 +591,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "V", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
+    cols = ["MAJ", "V", "Pays", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
             "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
-            "Exit", "Beta", "Statut"]
+            "Exit", "Industry"]
     ws.append(cols)
     for r in rows:
         raw = r["_raw"]
@@ -669,7 +623,7 @@ CSS = """<style>
   width: 100%;
   border-collapse: collapse;
   font-family: 'Inter', sans-serif;
-  font-size: .82rem;
+  font-size: .76rem;
   color: #c8d4e8;
   table-layout: fixed;
 }
@@ -763,18 +717,10 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None) -> None:
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        sort_choice = st.selectbox("Tri", [
-            "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓", "Beta ↓",
-        ], key=f"{key}_t")
-    with c2:
-        sf = st.selectbox("Statut",
-            ["Tous", "Strong buy", "Buy", "Fair", "Trim", "Exit"], key=f"{key}_f")
-
-    if sf != "Tous":
-        rows = [r for r in rows if r["_statut"] == sf]
+    sort_choice = st.selectbox("Tri", [
+        "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
+        "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓",
+    ], key=f"{key}_t")
 
     sort_map = {
         "Ticker A→Z":     lambda r: r["_ticker"],
@@ -785,7 +731,6 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
         "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
         "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
         "MAJ ↓":          lambda r: r["_maj"] or date.max,
-        "Beta ↓":         lambda r: (r["_beta"] is None, -(r["_beta"] or 0)),
     }
     key_fn = sort_map.get(sort_choice)
     if key_fn:
@@ -816,7 +761,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 # Onglet Debug
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: dict) -> None:
+def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, industries: dict) -> None:
     st.subheader("Diagnostic colonnes")
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
@@ -845,7 +790,6 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
     today = date.today()
     for _, row in tickers_df.iterrows():
         yf = str(row.get("yf_ticker", "") or "")
-        data = be_data.get(yf, {})
         maj_raw = row.get("last_update")
 
         maj_date = None
@@ -864,7 +808,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, be_data: d
             "MAJ_raw": maj_raw,
             "MAJ_date": maj_date,
             "older_than_30": older_than_30,
-            "beta": data.get("beta"),
+            "industry": industries.get(yf, ""),
             "price": prices.get(yf, {}).get("price"),
         })
 
@@ -1076,10 +1020,6 @@ def mark_refresh(scope: str) -> None:
     st.session_state["refresh_scope"] = scope
     fetch_prices.clear()
 
-def mark_beta(scope: str) -> None:
-    st.session_state["last_action"] = "beta"
-    st.session_state["refresh_scope"] = scope
-
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
 active_yf = pf_yf if refresh_scope == "pf" else wl_yf if refresh_scope == "wl" else all_yf
@@ -1106,23 +1046,20 @@ else:
         names = fetch_names(all_yf)
     st.session_state["names_data"] = names
 
-# ── 3. Beta (Yahoo) ───────────────────────────────────────────────────────────
+# ── 3. Industry (Yahoo) ───────────────────────────────────────────────────────
+cached_industries = st.session_state.get("industry_data", {})
+missing_industry_tickers = tuple(t for t in all_yf if not cached_industries.get(t))
 if not all_yf:
-    be_data = st.session_state.get("be_data_cache", {})
-elif same_data_key and last_action != "beta" and "be_data_cache" in st.session_state:
-    be_data = st.session_state["be_data_cache"]
+    industries = cached_industries
+elif same_data_key and "industry_data" in st.session_state:
+    industries = st.session_state["industry_data"]
+elif missing_industry_tickers:
+    industries = dict(cached_industries)
+    with st.spinner("Industries Yahoo…"):
+        industries.update(fetch_industries(missing_industry_tickers))
+    st.session_state["industry_data"] = industries
 else:
-    beta_scope = active_yf if last_action == "beta" else all_yf
-    be_data = dict(st.session_state.get("be_data_cache", {}))
-    if last_action == "beta":
-        beta_scope = tuple(t for t in beta_scope if be_data.get(t, {}).get("beta") is None)
-    if beta_scope:
-        if last_action == "beta":
-            fetch_be_cached.clear()
-        with st.spinner("Actualisation Beta…"):
-            fresh_be = fetch_be(beta_scope)
-        be_data.update(fresh_be)
-    st.session_state["be_data_cache"] = be_data
+    industries = cached_industries
 
 # ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
 if not all_yf:
@@ -1148,87 +1085,22 @@ ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
               ok=ok, total=len(all_yf))
 
-# ── Recherche globale ──────────────────────────────────────────────────────────
-# Auto-sélection du texte dans tous les champs texte
-components.html("""
-<script>
-(function() {
-    function attachSelectAll() {
-        var inputs = window.parent.document.querySelectorAll('input[type="text"]');
-        inputs.forEach(function(el) {
-            if (!el.dataset.sa) {
-                el.addEventListener('focus', function() { this.select(); });
-                el.dataset.sa = '1';
-            }
-        });
-    }
-    attachSelectAll();
-    new MutationObserver(attachSelectAll).observe(
-        window.parent.document.body,
-        {childList: true, subtree: true}
-    );
-})();
-</script>
-""", height=0)
-
-if "search_input" not in st.session_state:
-    st.session_state["search_input"] = st.session_state.get("global_search", "")
-
-def clear_search() -> None:
-    st.session_state["search_input"] = ""
-
-search_col, clear_col = st.columns([12, 1])
-with search_col:
-    global_search = st.text_input(
-        "Recherche",
-        placeholder="Ticker ou société…",
-        key="search_input",
-        label_visibility="collapsed",
-    )
-with clear_col:
-    st.button("Clear", key="clear_search", use_container_width=True, on_click=clear_search)
-
-st.session_state["global_search"] = global_search
-
 # Construire les rows des deux vues une seule fois
-rows_pf = build_rows(pf_df, prices, names, be_data, False, True)
-rows_wl = build_rows(wl_df, prices, names, be_data, False, False)
+rows_pf = build_rows(pf_df, prices, names, industries, False, True)
+rows_wl = build_rows(wl_df, prices, names, industries, False, False)
 
-# Appliquer la recherche globale
-if global_search:
-    q = global_search.lower()
-    rows_pf = [r for r in rows_pf if q in r["_ticker"].lower() or q in r["_name"].lower()]
-    rows_wl = [r for r in rows_wl if q in r["_ticker"].lower() or q in r["_name"].lower()]
-
-if global_search:
-    # Vue combinée quand une recherche est active
-    combined = rows_pf + rows_wl
-    total = len(combined)
-    st.markdown(f"<div style='color:#5a6a8a;font-size:.75rem;margin:6px 0 4px'>"
-                f"{total} résultat(s) dans Portefeuille + Watchlist</div>",
-                unsafe_allow_html=True)
-    render_tab(combined, key="search")
-else:
-    tab1, tab2, tab3 = st.tabs([
-        f"Portefeuille ({len(pf_df)})",
-        f"Watchlist ({len(wl_df)})",
-        "Debug",
-    ])
-    pf_cols = DISPLAY_COLS[:4] + ["JRS"] + DISPLAY_COLS[4:]
-    wl_cols = DISPLAY_COLS[:4] + ["JRS"] + DISPLAY_COLS[4:]
-    with tab1:
-        b1, b2 = st.columns([1, 1])
-        with b1:
-            st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
-        with b2:
-            st.button("Beta", key="beta_pf", use_container_width=True, on_click=mark_beta, args=("pf",))
-        render_tab(rows_pf, key="pf", display_cols=pf_cols)
-    with tab2:
-        b1, b2 = st.columns([1, 1])
-        with b1:
-            st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
-        with b2:
-            st.button("Beta", key="beta_wl", use_container_width=True, on_click=mark_beta, args=("wl",))
-        render_tab(rows_wl, key="wl", display_cols=wl_cols)
-    with tab3:
-        render_debug(tickers_df, prices, names, be_data)
+tab1, tab2, tab3 = st.tabs([
+    f"Portefeuille ({len(pf_df)})",
+    f"Watchlist ({len(wl_df)})",
+    "Debug",
+])
+pf_cols = DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
+wl_cols = DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
+with tab1:
+    st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
+    render_tab(rows_pf, key="pf", display_cols=pf_cols)
+with tab2:
+    st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
+    render_tab(rows_wl, key="wl", display_cols=wl_cols)
+with tab3:
+    render_debug(tickers_df, prices, names, industries)
