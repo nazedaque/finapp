@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 import openpyxl
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -484,18 +485,24 @@ def html_link(url) -> str:
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
             f'text-decoration:none;font-family:monospace">↗</a>')
 
-COUNTRY_FLAGS = {
-    ".AS": "🇳🇱", ".BR": "🇧🇪", ".DE": "🇩🇪", ".HK": "🇭🇰",
-    ".L": "🇬🇧", ".MC": "🇪🇸", ".PA": "🇫🇷", ".SI": "🇸🇬",
-    ".ST": "🇸🇪", ".T": "🇯🇵", ".TO": "🇨🇦", ".WA": "🇵🇱",
+COUNTRY_CODES = {
+    ".AS": "NL", ".BR": "BE", ".DE": "DE", ".HK": "HK",
+    ".L": "GB", ".MC": "ES", ".PA": "FR", ".SI": "SG",
+    ".ST": "SE", ".T": "JP", ".TO": "CA", ".WA": "PL",
 }
 
-def country_flag(ticker: str) -> str:
+def country_code(ticker: str) -> str:
     t = str(ticker or "").upper().strip()
-    for suffix, flag in sorted(COUNTRY_FLAGS.items(), key=lambda item: len(item[0]), reverse=True):
+    for suffix, code in sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True):
         if t.endswith(suffix):
-            return flag
-    return "🇺🇸" if t else ""
+            return code
+    return "US" if t else ""
+
+def html_country_flag(ticker: str) -> str:
+    code = country_code(ticker)
+    if not code:
+        return ""
+    return f'<span class="country-flag country-{code.lower()}" title="{code}"></span>'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Construction des lignes
@@ -550,7 +557,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "V":        r.get("verif_display", ""),
-                "Pays":     country_flag(yf_s),
+                "Pays":     country_code(yf_s),
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
@@ -564,7 +571,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
             "V":        r.get("verif_display", ""),
-            "Pays":     country_flag(yf_s),
+            "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
@@ -659,6 +666,63 @@ CSS = """<style>
 .wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
+.country-flag {
+  display: inline-block;
+  width: 24px;
+  height: 16px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.2), 0 1px 3px rgba(0,0,0,.35);
+  vertical-align: middle;
+}
+.country-us {
+  background: repeating-linear-gradient(to bottom, #b22234 0 1.23px, #fff 1.23px 2.46px);
+  position: relative;
+}
+.country-us::before {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 8.6px;
+  background: #3c3b6e;
+}
+.country-jp {
+  background: radial-gradient(circle at center, #bc002d 0 4.4px, transparent 4.5px), #fff;
+}
+.country-de { background: linear-gradient(to bottom, #000 0 33.33%, #dd0000 33.33% 66.66%, #ffce00 66.66%); }
+.country-fr { background: linear-gradient(to right, #0055a4 0 33.33%, #fff 33.33% 66.66%, #ef4135 66.66%); }
+.country-nl { background: linear-gradient(to bottom, #ae1c28 0 33.33%, #fff 33.33% 66.66%, #21468b 66.66%); }
+.country-be { background: linear-gradient(to right, #000 0 33.33%, #fae042 33.33% 66.66%, #ed2939 66.66%); }
+.country-gb {
+  background:
+    linear-gradient(27deg, transparent 43%, #fff 43% 49%, #c8102e 49% 53%, #fff 53% 59%, transparent 59%),
+    linear-gradient(153deg, transparent 43%, #fff 43% 49%, #c8102e 49% 53%, #fff 53% 59%, transparent 59%),
+    linear-gradient(to right, transparent 40%, #fff 40% 60%, transparent 60%),
+    linear-gradient(to bottom, transparent 35%, #fff 35% 65%, transparent 65%),
+    linear-gradient(to right, transparent 44%, #c8102e 44% 56%, transparent 56%),
+    linear-gradient(to bottom, transparent 41%, #c8102e 41% 59%, transparent 59%),
+    #012169;
+}
+.country-es { background: linear-gradient(to bottom, #aa151b 0 25%, #f1bf00 25% 75%, #aa151b 75%); }
+.country-hk {
+  background: radial-gradient(circle at center, #fff 0 2px, transparent 2.2px), #de2910;
+}
+.country-sg {
+  background:
+    radial-gradient(circle at 6px 4px, #fff 0 3px, transparent 3.2px),
+    linear-gradient(to bottom, #ef3340 0 50%, #fff 50%);
+}
+.country-se {
+  background:
+    linear-gradient(to right, transparent 0 30%, #fecc00 30% 42%, transparent 42%),
+    linear-gradient(to bottom, transparent 0 39%, #fecc00 39% 61%, transparent 61%),
+    #006aa7;
+}
+.country-ca {
+  background:
+    radial-gradient(circle at center, #d52b1e 0 3px, transparent 3.2px),
+    linear-gradient(to right, #d52b1e 0 24%, #fff 24% 76%, #d52b1e 76%);
+}
+.country-pl { background: linear-gradient(to bottom, #fff 0 50%, #dc143c 50%); }
 .score-spark {
   height: 14px;
   width: 100%;
@@ -966,6 +1030,55 @@ hr { border-color: #1e2535 !important; }
 }
 </style>
 """, unsafe_allow_html=True)
+
+components.html("""
+<script>
+(function () {
+  const parentWindow = window.parent;
+  const parentDocument = parentWindow.document;
+  if (parentWindow.__watchlistCacheShortcutBound) return;
+  parentWindow.__watchlistCacheShortcutBound = true;
+
+  function shouldIgnore(event) {
+    const target = event.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : "";
+    return tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable;
+  }
+
+  function redispatchCacheShortcut(target) {
+    parentWindow.__watchlistAllowCacheC = true;
+    const event = new parentWindow.KeyboardEvent("keydown", {
+      key: "c",
+      code: "KeyC",
+      bubbles: true,
+      cancelable: true
+    });
+    target.dispatchEvent(event);
+    parentWindow.__watchlistAllowCacheC = false;
+  }
+
+  function handleShortcut(event) {
+    if (shouldIgnore(event) || event.ctrlKey || event.metaKey || event.altKey) return;
+    const key = (event.key || "").toLowerCase();
+    if (key === "c" && !parentWindow.__watchlistAllowCacheC) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    if (key === "j") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      redispatchCacheShortcut(parentDocument);
+      redispatchCacheShortcut(parentWindow);
+      return false;
+    }
+  }
+
+  parentDocument.addEventListener("keydown", handleShortcut, true);
+  parentWindow.addEventListener("keydown", handleShortcut, true);
+})();
+</script>
+""", height=0)
 
 # ── Alertes doublons ──────────────────────────────────────────────────────────
 dupes = st.session_state.get("ticker_dupes", [])
