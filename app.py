@@ -533,7 +533,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score_mixte = score_sheet if score_sheet is not None else score
         upside  = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
-        industry = industries.get(yf_s, "")
+        industry = industries.get(yf_s, "") or "-"
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
@@ -669,10 +669,9 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-flagged:hover td { background: #3a2875 !important; }
 .wl-country-flag {
   display: inline-block;
-  width: 24px;
-  line-height: 16px;
+  width: 19px;
+  line-height: 13px;
   border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(255,255,255,.2), 0 1px 3px rgba(0,0,0,.35);
   vertical-align: middle;
 }
 .score-spark {
@@ -736,7 +735,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     sort_choice = st.selectbox("Tri", [
         "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
         "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓",
-    ], key=f"{key}_t")
+    ], key=f"{key}_t", label_visibility="collapsed")
 
     sort_map = {
         "Ticker A→Z":     lambda r: r["_ticker"],
