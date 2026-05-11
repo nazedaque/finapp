@@ -487,8 +487,10 @@ def html_link(url) -> str:
 
 COUNTRY_CODES = {
     ".AS": "NL", ".BR": "BE", ".DE": "DE", ".HK": "HK",
-    ".L": "GB", ".MC": "ES", ".PA": "FR", ".SI": "SG",
-    ".ST": "SE", ".T": "JP", ".TO": "CA", ".WA": "PL",
+    ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
+    ".PA": "FR", ".SI": "SG", ".ST": "SE", ".T": "JP",
+    ".TO": "CA", ".WA": "PL", ".AT": "GR", ".CO": "DK",
+    ".MI": "IT", ".SW": "CH",
 }
 
 def country_code(ticker: str) -> str:
