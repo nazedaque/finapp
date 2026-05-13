@@ -1027,8 +1027,17 @@ components.html("""
     }
   }
 
-  parentDocument.addEventListener("keydown", handleShortcut, true);
-  parentWindow.addEventListener("keydown", handleShortcut, true);
+  const targets = [
+    parentWindow,
+    parentDocument,
+    parentDocument.documentElement,
+    parentDocument.body
+  ].filter(Boolean);
+  for (const target of targets) {
+    target.addEventListener("keydown", handleShortcut, true);
+    target.addEventListener("keypress", handleShortcut, true);
+    target.addEventListener("keyup", handleShortcut, true);
+  }
 })();
 </script>
 """, height=0)
