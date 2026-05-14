@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
 
 import openpyxl
@@ -41,7 +41,7 @@ DISPLAY_COLS = [
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Industry", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "V": "34px", "Pays": "42px", "Ticker": "58px", "Société": "180px", "Qual": "52px",
+    "MAJ": "84px", "V": "34px", "Pays": "42px", "Ticker": "66px", "Société": "180px", "Qual": "52px",
     "Date d'achat": "96px", "JRS": "44px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
@@ -252,7 +252,8 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     # Requetes unitaires Yahoo : petits batches + courte pause pour limiter la pression.
     for i in range(0, len(tickers), YF_META_BATCH_SIZE):
         batch = tickers[i: i + YF_META_BATCH_SIZE]
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        executor = ThreadPoolExecutor(max_workers=8)
+        try:
             futures = {executor.submit(fetch_name_cached, t): t for t in batch}
             for future in iter_completed(futures):
                 try:
@@ -260,6 +261,8 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
                     names[t] = future.result(timeout=15)
                 except Exception:
                     names[futures[future]] = ""
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         if i + YF_META_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
     return names
@@ -288,7 +291,8 @@ def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
     tickers = list(yf_tickers)
     for i in range(0, len(tickers), YF_INFO_BATCH_SIZE):
         batch = tickers[i: i + YF_INFO_BATCH_SIZE]
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        executor = ThreadPoolExecutor(max_workers=10)
+        try:
             futures = {executor.submit(fetch_industry_cached, t): t for t in batch}
             for future in iter_completed(futures):
                 try:
@@ -298,6 +302,8 @@ def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
                         results[t] = industry
                 except Exception:
                     pass
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         if i + YF_INFO_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
     return results
@@ -953,7 +959,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
 
-/* ── Recherche ── */
+/* ── Champs de saisie ── */
 .stTextInput > div > div > input {
   background: #141824 !important; border: 1px solid #252d3d !important;
   border-radius: 8px !important; color: #e2e8f4 !important;
@@ -1090,6 +1096,10 @@ render_topbar(len(pf_df), len(wl_df), last_ts)
 def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
     return tuple(str(t) for t in df["yf_ticker"].dropna() if str(t).strip())
 
+def table_cols_with_holding_days() -> list[str]:
+    """Insère JRS juste après Société dans les deux vues principales."""
+    return DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
+
 pf_yf = tickers_for(pf_df)
 wl_yf = tickers_for(wl_df)
 all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf)))
@@ -1153,16 +1163,16 @@ else:
     prices = dict(st.session_state.get("prices_data", {}))
     prices.update(fresh_prices)
     st.session_state["prices_data"] = prices
+    st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 st.session_state["data_key"] = data_key
 
-st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+last_ts = st.session_state.get("last_fetch_ts", "—")
 
 ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 
 # Mise à jour du topbar avec les prix récupérés
-render_topbar(len(pf_df), len(wl_df), st.session_state["last_fetch_ts"],
-              ok=ok, total=len(all_yf))
+render_topbar(len(pf_df), len(wl_df), last_ts, ok=ok, total=len(all_yf))
 
 # Construire les rows des deux vues une seule fois
 rows_pf = build_rows(pf_df, prices, names, industries, False, True)
@@ -1173,13 +1183,12 @@ tab1, tab2, tab3 = st.tabs([
     f"Watchlist ({len(wl_df)})",
     "Debug",
 ])
-pf_cols = DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
-wl_cols = DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
+main_cols = table_cols_with_holding_days()
 with tab1:
     st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
-    render_tab(rows_pf, key="pf", display_cols=pf_cols)
+    render_tab(rows_pf, key="pf", display_cols=main_cols)
 with tab2:
     st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
-    render_tab(rows_wl, key="wl", display_cols=wl_cols)
+    render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
     render_debug(tickers_df, prices, names, industries)
