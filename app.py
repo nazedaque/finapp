@@ -25,9 +25,8 @@ SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
                  f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}")
 CSV_FALLBACK      = "tickers.csv"
 REFRESH_TTL       = 15 * 60
-SHEET_TTL         = 3_600
 NAME_TTL          = 7 * 86_400
-BE_TTL            = 86_400
+INFO_TTL          = 86_400
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_INFO_BATCH_SIZE = 50
@@ -55,10 +54,6 @@ CENTER = {"MAJ", "V", "Pays", "Date d'achat", "JRS", "Prix", "Var %", "Upside", 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
 # ══════════════════════════════════════════════════════════════════════════════
-
-def normalize_col(s: str) -> str:
-    nfkd = unicodedata.normalize("NFD", str(s))
-    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn").strip().lower()
 
 def parse_num(v) -> float | None:
     if v is None: return None
@@ -216,6 +211,13 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
 # Métadonnées (nom, industry) — parallèle, cache 24h
 # ══════════════════════════════════════════════════════════════════════════════
 
+def iter_completed(futures: dict, timeout: int = 60):
+    """Renvoie les futures terminées sans faire échouer tout le batch en cas de timeout."""
+    try:
+        yield from as_completed(futures, timeout=timeout)
+    except TimeoutError:
+        return
+
 def _fetch_one_name(t: str) -> tuple[str, str]:
     """Récupère uniquement le nom — rapide, via history_metadata."""
     try:
@@ -252,7 +254,7 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
         batch = tickers[i: i + YF_META_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(fetch_name_cached, t): t for t in batch}
-            for future in as_completed(futures, timeout=60):
+            for future in iter_completed(futures):
                 try:
                     t = futures[future]
                     names[t] = future.result(timeout=15)
@@ -275,7 +277,7 @@ def _fetch_one_industry(t: str) -> tuple[str, str]:
     except Exception:
         return t, ""
 
-@st.cache_data(ttl=BE_TTL, show_spinner=False)
+@st.cache_data(ttl=INFO_TTL, show_spinner=False)
 def fetch_industry_cached(ticker: str) -> str:
     return _fetch_one_industry(ticker)[1]
 
@@ -288,7 +290,7 @@ def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
         batch = tickers[i: i + YF_INFO_BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(fetch_industry_cached, t): t for t in batch}
-            for future in as_completed(futures, timeout=60):
+            for future in iter_completed(futures):
                 try:
                     t = futures[future]
                     industry = future.result(timeout=15)
