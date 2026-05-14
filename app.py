@@ -291,9 +291,11 @@ def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
             for future in as_completed(futures, timeout=60):
                 try:
                     t = futures[future]
-                    results[t] = future.result(timeout=15)
+                    industry = future.result(timeout=15)
+                    if industry:
+                        results[t] = industry
                 except Exception:
-                    results[futures[future]] = ""
+                    pass
         if i + YF_INFO_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
     return results
@@ -1126,13 +1128,13 @@ cached_industries = st.session_state.get("industry_data", {})
 missing_industry_tickers = tuple(t for t in all_yf if not cached_industries.get(t))
 if not all_yf:
     industries = cached_industries
-elif same_data_key and "industry_data" in st.session_state:
-    industries = st.session_state["industry_data"]
 elif missing_industry_tickers:
     industries = dict(cached_industries)
     with st.spinner("Industries Yahoo…"):
         industries.update(fetch_industries(missing_industry_tickers))
     st.session_state["industry_data"] = industries
+elif same_data_key and "industry_data" in st.session_state:
+    industries = st.session_state["industry_data"]
 else:
     industries = cached_industries
 
