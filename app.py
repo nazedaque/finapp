@@ -1194,20 +1194,20 @@ rows_wl = build_rows(wl_df, prices, names, industries, False, False)
 rows_asia = build_rows(asia_df, prices, names, industries, False, False)
 
 tab1, tab2, tab3, tab4 = st.tabs([
+    f"Portefeuille ({len(pf_df)})",
     f"Watchlist ({len(wl_df)})",
     f"Asia ({len(asia_df)})",
-    f"Portefeuille ({len(pf_df)})",
     "Debug",
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
-    st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
-    render_tab(rows_wl, key="wl", display_cols=main_cols)
-with tab2:
-    st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
-    render_tab(rows_asia, key="asia", display_cols=main_cols)
-with tab3:
     st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
     render_tab(rows_pf, key="pf", display_cols=main_cols)
+with tab2:
+    st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
+    render_tab(rows_wl, key="wl", display_cols=main_cols)
+with tab3:
+    st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
+    render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab4:
     render_debug(tickers_df, prices, names, industries)
