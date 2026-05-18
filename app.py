@@ -862,8 +862,16 @@ if tickers_df.empty:
     st.dataframe(df_raw, use_container_width=True)
     st.stop()
 
-pf_df    = tickers_df[tickers_df["portif"] == 1].copy()
-wl_df    = tickers_df[tickers_df["portif"] != 1].copy()
+ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI")
+
+def is_asia_ticker(ticker: str) -> bool:
+    return str(ticker or "").upper().strip().endswith(ASIA_SUFFIXES)
+
+pf_df = tickers_df[tickers_df["portif"] == 1].copy()
+watchlist_all_df = tickers_df[tickers_df["portif"] != 1].copy()
+asia_mask = watchlist_all_df["yf_ticker"].apply(is_asia_ticker)
+asia_df = watchlist_all_df[asia_mask].copy()
+wl_df = watchlist_all_df[~asia_mask].copy()
 
 # ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
@@ -1091,7 +1099,7 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 """, unsafe_allow_html=True)
 
 # Affichage initial (avant fetch)
-render_topbar(len(pf_df), len(wl_df), last_ts)
+render_topbar(len(pf_df), len(watchlist_all_df), last_ts)
 
 def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
     return tuple(str(t) for t in df["yf_ticker"].dropna() if str(t).strip())
@@ -1102,7 +1110,8 @@ def table_cols_with_holding_days() -> list[str]:
 
 pf_yf = tickers_for(pf_df)
 wl_yf = tickers_for(wl_df)
-all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf)))
+asia_yf = tickers_for(asia_df)
+all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *asia_yf)))
 
 def mark_refresh(scope: str) -> None:
     st.session_state["last_action"] = "refresh"
@@ -1111,7 +1120,12 @@ def mark_refresh(scope: str) -> None:
 
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
-active_yf = pf_yf if refresh_scope == "pf" else wl_yf if refresh_scope == "wl" else all_yf
+active_yf = (
+    pf_yf if refresh_scope == "pf"
+    else wl_yf if refresh_scope == "wl"
+    else asia_yf if refresh_scope == "asia"
+    else all_yf
+)
 
 # ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
 data_key = all_yf
@@ -1172,23 +1186,28 @@ last_ts = st.session_state.get("last_fetch_ts", "—")
 ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 
 # Mise à jour du topbar avec les prix récupérés
-render_topbar(len(pf_df), len(wl_df), last_ts, ok=ok, total=len(all_yf))
+render_topbar(len(pf_df), len(watchlist_all_df), last_ts, ok=ok, total=len(all_yf))
 
-# Construire les rows des deux vues une seule fois
+# Construire les rows des vues une seule fois
 rows_pf = build_rows(pf_df, prices, names, industries, False, True)
 rows_wl = build_rows(wl_df, prices, names, industries, False, False)
+rows_asia = build_rows(asia_df, prices, names, industries, False, False)
 
-tab1, tab2, tab3 = st.tabs([
-    f"Portefeuille ({len(pf_df)})",
+tab1, tab2, tab3, tab4 = st.tabs([
     f"Watchlist ({len(wl_df)})",
+    f"Asia ({len(asia_df)})",
+    f"Portefeuille ({len(pf_df)})",
     "Debug",
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
-    st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
-    render_tab(rows_pf, key="pf", display_cols=main_cols)
-with tab2:
     st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
     render_tab(rows_wl, key="wl", display_cols=main_cols)
+with tab2:
+    st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
+    render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab3:
+    st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
+    render_tab(rows_pf, key="pf", display_cols=main_cols)
+with tab4:
     render_debug(tickers_df, prices, names, industries)
