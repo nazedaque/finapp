@@ -498,7 +498,7 @@ def html_link(url) -> str:
 COUNTRY_CODES = {
     ".AS": "NL", ".BR": "BE", ".DE": "DE", ".HK": "HK",
     ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
-    ".PA": "FR", ".SI": "SG", ".ST": "SE", ".T": "JP",
+    ".OL": "NO", ".PA": "FR", ".SI": "SG", ".ST": "SE", ".T": "JP",
     ".TO": "CA", ".WA": "PL", ".AT": "GR", ".CO": "DK",
     ".MI": "IT", ".SW": "CH",
 }
@@ -862,7 +862,7 @@ if tickers_df.empty:
     st.dataframe(df_raw, use_container_width=True)
     st.stop()
 
-ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI")
+ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI", ".HK")
 
 def is_asia_ticker(ticker: str) -> bool:
     return str(ticker or "").upper().strip().endswith(ASIA_SUFFIXES)
@@ -1211,3 +1211,4 @@ with tab3:
     render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab4:
     render_debug(tickers_df, prices, names, industries)
+
