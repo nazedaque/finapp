@@ -299,32 +299,41 @@ def _num_or_none(v):
     except Exception:
         return None
 
-def _fetch_quote_batch(batch: list[str]) -> dict[str, dict]:
-    """Quote Yahoo officielle par batch : prix et variation affichés par Yahoo."""
-    if not batch:
-        return {}
-    symbols = urllib.parse.quote(",".join(batch))
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols}"
+def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
+    symbol = str(ticker or "").strip()
+    if not symbol:
+        return ticker, {"price": None, "chg": None}
+    encoded = urllib.parse.quote(symbol, safe="")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?range=5d&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
+        result = (payload.get("chart", {}).get("result") or [None])[0]
+        meta = (result or {}).get("meta", {})
+        price = _num_or_none(meta.get("regularMarketPrice"))
+        prev = _num_or_none(meta.get("chartPreviousClose") or meta.get("previousClose"))
+        chg = (price - prev) / prev * 100 if price is not None and prev else None
+        return ticker, {"price": price, "chg": chg}
     except Exception:
-        return {}
+        return ticker, {"price": None, "chg": None}
 
-    quotes = {}
-    for item in payload.get("quoteResponse", {}).get("result", []):
-        symbol = item.get("symbol")
-        if not symbol:
-            continue
-        price = _num_or_none(item.get("regularMarketPrice"))
-        chg = _num_or_none(item.get("regularMarketChangePercent"))
-        prev = _num_or_none(item.get("regularMarketPreviousClose") or item.get("regularMarketPreviousCloseRaw"))
-        if chg is None and price is not None and prev:
-            chg = (price - prev) / prev * 100
-        quotes[symbol.upper()] = {"price": price, "chg": chg}
+def _fetch_quote_batch(batch: list[str]) -> dict[str, dict]:
+    """Prix et Var % Yahoo via chart, plus fiable que le recalcul OHLC intraday."""
+    quotes: dict[str, dict] = {}
+    executor = ThreadPoolExecutor(max_workers=10)
+    try:
+        futures = {executor.submit(_fetch_chart_quote, t): t for t in batch}
+        for future in iter_completed(futures, timeout=30):
+            try:
+                ticker, quote = future.result(timeout=5)
+                quotes[str(ticker).upper()] = quote
+            except Exception:
+                t = futures[future]
+                quotes[str(t).upper()] = {"price": None, "chg": None}
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     return quotes
-
 def _previous_close(daily_closes, ref_date=None):
     if daily_closes.empty:
         return None
@@ -350,10 +359,10 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     import time
     results: dict[str, dict] = {}
     tickers = list(yf_tickers)
-    # Priorité à la quote Yahoo officielle ; OHLC en fallback si la quote manque.
+    # Priorité au chart Yahoo officiel ; OHLC en fallback si le prix ou la Var % manque.
     for i, batch in enumerate(_chunked(tickers, BATCH_SIZE)):
         quote_data = _fetch_quote_batch(batch)
-        missing = [t for t in batch if quote_data.get(t.upper(), {}).get("price") is None]
+        missing = [t for t in batch if quote_data.get(t.upper(), {}).get("price") is None or quote_data.get(t.upper(), {}).get("chg") is None]
 
         intra_data = None
         daily_data = None
@@ -378,7 +387,9 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
             if price is None:
                 intraday_closes = _closes(intra_data, t, multi) if intra_data is not None else pd.Series(dtype=float)
                 daily_closes = _closes(daily_data, t, multi) if daily_data is not None else pd.Series(dtype=float)
-                price, chg = _price_chg(intraday_closes, daily_closes)
+                fallback_price, fallback_chg = _price_chg(intraday_closes, daily_closes)
+                price = price if price is not None else fallback_price
+                chg = chg if chg is not None else fallback_chg
             results[t] = {"price": price, "chg": chg}
         if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
             time.sleep(YF_BATCH_PAUSE_SEC)
