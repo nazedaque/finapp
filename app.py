@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import io
 import re
 import unicodedata
@@ -26,10 +27,8 @@ SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
 CSV_FALLBACK      = "tickers.csv"
 REFRESH_TTL       = 15 * 60
 NAME_TTL          = 7 * 86_400
-INFO_TTL          = 86_400
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
-YF_INFO_BATCH_SIZE = 50
 YF_BATCH_PAUSE_SEC = 0.2
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -37,15 +36,15 @@ YF_BATCH_PAUSE_SEC = 0.2
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "V", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Industry", "↗",
+    "MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "84px", "V": "34px", "Pays": "42px", "Ticker": "72px", "Société": "180px", "Qual": "52px",
-    "Date d'achat": "96px", "JRS": "38px",
+    "MAJ": "58px", "V": "34px", "JRS": "38px", "Pays": "42px", "Ticker": "72px", "Société": "180px", "Qual": "52px",
+    "Date d'achat": "96px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
-    "Industry": "150px",
+    "Commentaires": "220px",
     "↗": "36px",
 }
 CENTER = {"MAJ", "V", "Pays", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
@@ -94,6 +93,9 @@ SHEET_COL_NORMALIZED = {
     "trim":        "trim",
     "exit":        "exit",
     "url":         "url",
+    "commentaire": "comments",
+    "commentaires": "comments",
+    "comments":    "comments",
     "spot":        "spot_sheet",
     "score mixte": "score_sheet",
     "last update": "last_update",
@@ -141,12 +143,16 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         norm = _normalize_col(col)
         if norm in SHEET_COL_NORMALIZED:
             rename_map[col] = SHEET_COL_NORMALIZED[norm]
+    comments_col_m = df.iloc[:, 12].copy() if len(df.columns) > 12 else None
+
     df = df.rename(columns=rename_map)
 
     # Colonnes manquantes → NA
     for col in SHEET_COL_NORMALIZED.values():
         if col not in df.columns:
             df[col] = pd.NA
+    if comments_col_m is not None:
+        df["comments"] = comments_col_m.fillna("")
 
     # Le nouveau sheet utilise yf_ticker comme ticker principal.
     if df["gf_ticker"].isna().all() and "yf_ticker" in df.columns:
@@ -208,7 +214,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     return df.reset_index(drop=True), source
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Métadonnées (nom, industry) — parallèle, cache 24h
+# Métadonnées (noms) — parallèle, cache 7j
 # ══════════════════════════════════════════════════════════════════════════════
 
 def iter_completed(futures: dict, timeout: int = 60):
@@ -266,47 +272,6 @@ def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
         if i + YF_META_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
     return names
-
-def _fetch_one_industry(t: str) -> tuple[str, str]:
-    """Récupère industry, fallback sector, via .info."""
-    try:
-        tk = yf.Ticker(t)
-        try:
-            info = tk.info or {}
-            industry = (info.get("industry") or info.get("sector") or "").strip()
-            return t, industry
-        except Exception:
-            return t, ""
-    except Exception:
-        return t, ""
-
-@st.cache_data(ttl=INFO_TTL, show_spinner=False)
-def fetch_industry_cached(ticker: str) -> str:
-    return _fetch_one_industry(ticker)[1]
-
-def fetch_industries(yf_tickers: tuple[str, ...]) -> dict[str, str]:
-    """Industry — cache par ticker."""
-    import time
-    results: dict[str, str] = {}
-    tickers = list(yf_tickers)
-    for i in range(0, len(tickers), YF_INFO_BATCH_SIZE):
-        batch = tickers[i: i + YF_INFO_BATCH_SIZE]
-        executor = ThreadPoolExecutor(max_workers=10)
-        try:
-            futures = {executor.submit(fetch_industry_cached, t): t for t in batch}
-            for future in iter_completed(futures):
-                try:
-                    t = futures[future]
-                    industry = future.result(timeout=15)
-                    if industry:
-                        results[t] = industry
-                except Exception:
-                    pass
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
-        if i + YF_INFO_BATCH_SIZE < len(tickers):
-            time.sleep(YF_BATCH_PAUSE_SEC)
-    return results
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cours Yahoo Finance
@@ -414,7 +379,7 @@ def fmt_maj(maj_date) -> str:
         return "—"
     try:
         d = maj_date if isinstance(maj_date, date) else pd.to_datetime(maj_date).date()
-        s = d.strftime("%d-%m-%Y")
+        s = d.strftime("%d-%m")
         today = date.today()
         red = (today - d).days > 30
         return f'<span style="color:#ef4444">{s}</span>' if red else s
@@ -521,7 +486,7 @@ def html_country_flag(ticker: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
-               names: dict, industries: dict,
+               names: dict,
                highlight_radar: bool = False,
                holding_required: bool = False) -> list[dict]:
     rows = []
@@ -545,7 +510,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score_mixte = score_sheet if score_sheet is not None else score
         upside  = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
-        industry = industries.get(yf_s, "") or "-"
+        comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
@@ -567,27 +532,27 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_flagged":      flagged,
             # Données brutes pour export XLS
             "_raw": {
-                "MAJ": r.get("last_update").strftime("%d-%m-%Y") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
+                "MAJ": r.get("last_update").strftime("%d-%m") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "V":        r.get("verif_display", ""),
+                "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
                 "Pays":     country_code(yf_s),
                 "Ticker":   gf, "Société": name_u,
                 "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
-                "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(score) if score is not None else "",
                 "Mixte":    score_mixte,
                 "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
                 "Qual":     int(quality) if quality is not None else "",
-                "Industry": industry,
+                "Commentaires": comments,
             },
             # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
             "V":        r.get("verif_display", ""),
+            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{name_u}">{name_html}</span>',
             "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
-            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
             "Qual":     fmt_note(r.get("note")),
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
@@ -598,7 +563,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_price(fair),
             "Trim":     fmt_price(trim),
             "Exit":     fmt_price(exit_),
-            "Industry": industry,
+            "Commentaires": html.escape(comments),
             "↗":        html_link(r.get("url")),
         })
     return rows
@@ -610,9 +575,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
 def export_xlsx(rows: list[dict]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "V", "Pays", "Ticker", "Société", "JRS", "Qual", "Prix", "Var %",
+    cols = ["MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %",
             "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
-            "Exit", "Industry"]
+            "Exit", "Commentaires"]
     ws.append(cols)
     for r in rows:
         raw = r["_raw"]
@@ -788,7 +753,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 # Onglet Debug
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, industries: dict) -> None:
+def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
     st.subheader("Diagnostic colonnes")
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
@@ -835,7 +800,6 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict, industries
             "MAJ_raw": maj_raw,
             "MAJ_date": maj_date,
             "older_than_30": older_than_30,
-            "industry": industries.get(yf, ""),
             "price": prices.get(yf, {}).get("price"),
         })
 
@@ -1105,8 +1069,8 @@ def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
     return tuple(str(t) for t in df["yf_ticker"].dropna() if str(t).strip())
 
 def table_cols_with_holding_days() -> list[str]:
-    """Insère JRS juste après Société dans les deux vues principales."""
-    return DISPLAY_COLS[:5] + ["JRS"] + DISPLAY_COLS[5:]
+    """Colonnes principales, avec JRS placé entre V et Pays."""
+    return DISPLAY_COLS
 
 pf_yf = tickers_for(pf_df)
 wl_yf = tickers_for(wl_df)
@@ -1149,22 +1113,7 @@ else:
         names = fetch_names(all_yf)
     st.session_state["names_data"] = names
 
-# ── 3. Industry (Yahoo) ───────────────────────────────────────────────────────
-cached_industries = st.session_state.get("industry_data", {})
-missing_industry_tickers = tuple(t for t in all_yf if not cached_industries.get(t))
-if not all_yf:
-    industries = cached_industries
-elif missing_industry_tickers:
-    industries = dict(cached_industries)
-    with st.spinner("Industries Yahoo…"):
-        industries.update(fetch_industries(missing_industry_tickers))
-    st.session_state["industry_data"] = industries
-elif same_data_key and "industry_data" in st.session_state:
-    industries = st.session_state["industry_data"]
-else:
-    industries = cached_industries
-
-# ── 4. Cours (Yahoo) ──────────────────────────────────────────────────────────
+# ── 3. Cours (Yahoo) ──────────────────────────────────────────────────────────
 if not all_yf:
     prices = st.session_state.get("prices_data", {})
 elif same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
@@ -1189,9 +1138,9 @@ ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 render_topbar(len(pf_df), len(watchlist_all_df), last_ts, ok=ok, total=len(all_yf))
 
 # Construire les rows des vues une seule fois
-rows_pf = build_rows(pf_df, prices, names, industries, False, True)
-rows_wl = build_rows(wl_df, prices, names, industries, False, False)
-rows_asia = build_rows(asia_df, prices, names, industries, False, False)
+rows_pf = build_rows(pf_df, prices, names, False, True)
+rows_wl = build_rows(wl_df, prices, names, False, False)
+rows_asia = build_rows(asia_df, prices, names, False, False)
 
 tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
@@ -1210,5 +1159,5 @@ with tab3:
     st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
     render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab4:
-    render_debug(tickers_df, prices, names, industries)
+    render_debug(tickers_df, prices, names)
 
