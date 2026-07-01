@@ -287,34 +287,52 @@ def _closes(data, ticker, multi):
         return s if isinstance(s, pd.Series) else pd.Series(dtype=float)
     except Exception: return pd.Series(dtype=float)
 
-def _price_chg(closes):
-    if closes.empty: return None, None
-    price = float(closes.iloc[-1])
-    dates = pd.to_datetime(closes.index).tz_localize(None).normalize()
-    prev = closes[dates < dates[-1]]
-    chg = None
-    if not prev.empty:
-        p0 = float(prev.iloc[-1])
-        if p0: chg = (price - p0) / p0 * 100
-    return price, chg
+def _previous_close(daily_closes, ref_date=None):
+    if daily_closes.empty:
+        return None
+    daily_dates = pd.to_datetime(daily_closes.index).tz_localize(None).normalize()
+    if ref_date is not None and len(daily_closes) >= 2 and daily_dates[-1] >= ref_date:
+        return float(daily_closes.iloc[-2])
+    return float(daily_closes.iloc[-1])
+
+def _price_chg(intraday_closes, daily_closes):
+    if intraday_closes.empty and daily_closes.empty:
+        return None, None
+    price = float(intraday_closes.iloc[-1]) if not intraday_closes.empty else float(daily_closes.iloc[-1])
+    ref_date = None
+    if not intraday_closes.empty:
+        ref_date = pd.to_datetime(intraday_closes.index).tz_localize(None).normalize()[-1]
+    prev_close = _previous_close(daily_closes, ref_date)
+    if prev_close:
+        return price, (price - prev_close) / prev_close * 100
+    return price, None
 
 @st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
 def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
     import time
     results: dict[str, dict] = {}
     tickers = list(yf_tickers)
-    # Requetes mutualisees Yahoo : batches plus gros, mais on garde une pause courte.
+    # Prix courant via intraday ; Var % calculée contre le previous close journalier Yahoo.
     for i, batch in enumerate(_chunked(tickers, BATCH_SIZE)):
+        intra_data = None
+        daily_data = None
         try:
-            data = yf.download(tickers=" ".join(batch), period="5d", interval="30m",
-                               auto_adjust=False, progress=False, group_by="ticker",
-                               threads=True, prepost=False)
+            intra_data = yf.download(tickers=" ".join(batch), period="5d", interval="30m",
+                                     auto_adjust=False, progress=False, group_by="ticker",
+                                     threads=True, prepost=False)
         except Exception:
-            for t in batch: results[t] = {"price": None, "chg": None}
-            continue
+            pass
+        try:
+            daily_data = yf.download(tickers=" ".join(batch), period="10d", interval="1d",
+                                     auto_adjust=False, progress=False, group_by="ticker",
+                                     threads=True, prepost=False)
+        except Exception:
+            pass
         multi = len(batch) > 1
         for t in batch:
-            price, chg = _price_chg(_closes(data, t, multi))
+            intraday_closes = _closes(intra_data, t, multi) if intra_data is not None else pd.Series(dtype=float)
+            daily_closes = _closes(daily_data, t, multi) if daily_data is not None else pd.Series(dtype=float)
+            price, chg = _price_chg(intraday_closes, daily_closes)
             results[t] = {"price": price, "chg": chg}
         if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
             time.sleep(YF_BATCH_PAUSE_SEC)
