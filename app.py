@@ -304,7 +304,7 @@ def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
     if not symbol:
         return ticker, {"price": None, "chg": None}
     encoded = urllib.parse.quote(symbol, safe="")
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?range=5d&interval=1d"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?range=1d&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -319,7 +319,7 @@ def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
         return ticker, {"price": None, "chg": None}
 
 def _fetch_quote_batch(batch: list[str]) -> dict[str, dict]:
-    """Prix et Var % Yahoo via chart, plus fiable que le recalcul OHLC intraday."""
+    """Prix et Var % Yahoo via chart 1d, alignés sur la variation affichée par Yahoo."""
     quotes: dict[str, dict] = {}
     executor = ThreadPoolExecutor(max_workers=10)
     try:
@@ -334,6 +334,7 @@ def _fetch_quote_batch(batch: list[str]) -> dict[str, dict]:
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return quotes
+
 def _previous_close(daily_closes, ref_date=None):
     if daily_closes.empty:
         return None
