@@ -4,11 +4,14 @@ import json
 import html
 import io
 import re
+import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import openpyxl
 import pandas as pd
@@ -29,10 +32,10 @@ SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
                  f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}")
 CSV_FALLBACK      = "tickers.csv"
 REFRESH_TTL       = 15 * 60
-NAME_TTL          = 7 * 86_400
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
+HTTP_RETRIES      = 3
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Colonnes & layout — identiques entre onglets
@@ -44,13 +47,12 @@ DISPLAY_COLS = [
 ]
 COL_WIDTHS = {
     "MAJ": "58px", "V": "34px", "JRS": "38px", "Pays": "42px", "Ticker": "72px", "Société": "180px", "Qual": "52px",
-    "Date d'achat": "96px",
     "Prix": "70px", "Var %": "70px", "Upside": "66px",
     "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
     "Commentaires": "220px",
     "↗": "36px",
 }
-CENTER = {"MAJ", "V", "Pays", "Date d'achat", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
+CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -69,14 +71,6 @@ def parse_num(v) -> float | None:
     try: return float(s)
     except ValueError: return None
 
-def stockopedia_url(gf_ticker: str, name: str) -> str:
-    """Construit l'URL Stockopedia depuis le nom + ticker GF."""
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
-    if slug:
-        return f"https://www.stockopedia.com/share-prices/{slug}/{gf_ticker}/"
-    # Fallback : recherche Stockopedia
-    sym = gf_ticker.split(":")[-1]
-    return f"https://www.stockopedia.com/search/?q={sym}"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Chargement du sheet
@@ -116,29 +110,49 @@ def _normalize_col(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def load_tickers() -> tuple[pd.DataFrame, str]:
-    """Toujours re-fetché depuis le sheet — pas de cache."""
-    import time as _t
-    bust  = int(_t.time())
-    url   = SHEET_CSV_URL + f"&_cb={bust}"
-    source = "Google Sheet"
-    df = None
-
-    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+def _read_remote_csv(url: str) -> pd.DataFrame:
+    """Télécharge le CSV une seule fois, avec timeout et reprises transitoires."""
+    last_error: Exception | None = None
+    raw = b""
+    for attempt in range(HTTP_RETRIES):
         try:
-            df = pd.read_csv(url, encoding=enc, header=0, dtype=str)
+            request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(request, timeout=15) as response:
+                raw = response.read()
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            last_error = exc
+            retryable = not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
+            if not retryable or attempt + 1 >= HTTP_RETRIES:
+                raise
+            time.sleep(0.4 * (2 ** attempt))
+
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=encoding, header=0, dtype=str)
             if not df.empty:
-                break
-        except Exception:
-            continue
+                return df
+        except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+            last_error = exc
+    raise RuntimeError(f"CSV Google Sheet illisible : {last_error}")
 
-    # Essai 2 : CSV local
-    if df is None or df.empty:
+
+def load_tickers() -> tuple[pd.DataFrame, str]:
+    """Charge et normalise le Google Sheet, avec CSV local en secours."""
+    url = SHEET_CSV_URL + f"&_cb={time.time_ns()}"
+    source = "Google Sheet"
+    try:
+        df = _read_remote_csv(url)
+    except Exception as remote_error:
+        fallback_path = Path(__file__).with_name(CSV_FALLBACK)
         try:
-            df = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0, dtype=str)
+            df = pd.read_csv(fallback_path, encoding="utf-8-sig", header=0, dtype=str)
             source = "tickers.csv (fallback)"
-        except Exception as exc:
-            raise RuntimeError(f"Impossible de charger les données : {exc}") from exc
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Impossible de charger le Google Sheet ({remote_error}) "
+                f"ni le CSV local ({fallback_error})."
+            ) from fallback_error
 
     # Renommage robuste avec normalisation agressive
     rename_map: dict[str, str] = {}
@@ -209,6 +223,8 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
             ~df["yf_ticker"].astype(str).str.strip().isin(["", "nan", "None"]),
             other=df["gf_ticker"].astype(str)
         )
+    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip()
+    df["yf_ticker"] = df["yf_ticker"].astype(str).str.strip().str.upper()
 
     # Détection des doublons
     dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
@@ -250,12 +266,10 @@ def _fetch_one_name(t: str) -> tuple[str, str]:
     except Exception:
         return t, ""
 
-@st.cache_data(ttl=NAME_TTL, show_spinner=False)
 def fetch_name_cached(ticker: str) -> str:
     return _fetch_one_name(ticker)[1]
 
 def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
-    import time
     names: dict[str, str] = {}
     tickers = list(yf_tickers)
     # Requetes unitaires Yahoo : petits batches + courte pause pour limiter la pression.
@@ -284,12 +298,32 @@ def _chunked(items, size):
     for i in range(0, len(items), size): yield items[i: i + size]
 
 def _closes(data, ticker, multi):
+    if data is None or getattr(data, "empty", True):
+        return pd.Series(dtype=float)
+    candidates = []
     try:
-        s = data[ticker]["Close"] if multi else data["Close"]
-        s = s.dropna().astype(float)
-        return s if isinstance(s, pd.Series) else pd.Series(dtype=float)
-    except Exception: return pd.Series(dtype=float)
-
+        if isinstance(data.columns, pd.MultiIndex):
+            candidates.extend([
+                lambda: data[ticker]["Close"],
+                lambda: data["Close"][ticker],
+                lambda: data[(ticker, "Close")],
+                lambda: data[("Close", ticker)],
+            ])
+        else:
+            candidates.append(lambda: data["Close"])
+        for getter in candidates:
+            try:
+                series = getter()
+                if isinstance(series, pd.DataFrame):
+                    series = series.iloc[:, 0]
+                series = series.dropna().astype(float)
+                if isinstance(series, pd.Series):
+                    return series
+            except (KeyError, TypeError, IndexError, AttributeError):
+                continue
+    except Exception:
+        pass
+    return pd.Series(dtype=float)
 
 def _num_or_none(v):
     try:
@@ -300,23 +334,36 @@ def _num_or_none(v):
         return None
 
 def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
-    symbol = str(ticker or "").strip()
+    symbol = str(ticker or "").strip().upper()
+    empty = {"price": None, "chg": None, "name": "", "error": ""}
     if not symbol:
-        return ticker, {"price": None, "chg": None}
+        return symbol, empty
+
     encoded = urllib.parse.quote(symbol, safe="")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?range=1d&interval=1d"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        result = (payload.get("chart", {}).get("result") or [None])[0]
-        meta = (result or {}).get("meta", {})
-        price = _num_or_none(meta.get("regularMarketPrice"))
-        prev = _num_or_none(meta.get("chartPreviousClose") or meta.get("previousClose"))
-        chg = (price - prev) / prev * 100 if price is not None and prev else None
-        return ticker, {"price": price, "chg": chg}
-    except Exception:
-        return ticker, {"price": None, "chg": None}
+    last_error = ""
+    for attempt in range(HTTP_RETRIES):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            result = (payload.get("chart", {}).get("result") or [None])[0]
+            meta = (result or {}).get("meta", {})
+            price = _num_or_none(meta.get("regularMarketPrice"))
+            prev = _num_or_none(meta.get("chartPreviousClose") or meta.get("previousClose"))
+            chg = (price - prev) / prev * 100 if price is not None and prev else None
+            name = str(meta.get("shortName") or meta.get("longName") or "").strip()
+            return symbol, {"price": price, "chg": chg, "name": name, "error": ""}
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            retryable = not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
+            if not retryable or attempt + 1 >= HTTP_RETRIES:
+                break
+            time.sleep(0.4 * (2 ** attempt))
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            break
+    return symbol, {**empty, "error": last_error}
 
 def _fetch_quote_batch(batch: list[str]) -> dict[str, dict]:
     """Prix et Var % Yahoo via chart 1d, alignés sur la variation affichée par Yahoo."""
@@ -346,18 +393,20 @@ def _previous_close(daily_closes, ref_date=None):
 def _price_chg(intraday_closes, daily_closes):
     if intraday_closes.empty and daily_closes.empty:
         return None, None
-    price = float(intraday_closes.iloc[-1]) if not intraday_closes.empty else float(daily_closes.iloc[-1])
-    ref_date = None
-    if not intraday_closes.empty:
+    if intraday_closes.empty:
+        price = float(daily_closes.iloc[-1])
+        prev_close = float(daily_closes.iloc[-2]) if len(daily_closes) >= 2 else None
+    else:
+        price = float(intraday_closes.iloc[-1])
         ref_date = pd.to_datetime(intraday_closes.index).tz_localize(None).normalize()[-1]
-    prev_close = _previous_close(daily_closes, ref_date)
+        prev_close = _previous_close(daily_closes, ref_date)
     if prev_close:
         return price, (price - prev_close) / prev_close * 100
     return price, None
 
 @st.cache_data(ttl=REFRESH_TTL, show_spinner=False)
-def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
-    import time
+def fetch_prices(yf_tickers: tuple[str, ...], refresh_nonce: int = 0) -> dict[str, dict]:
+    del refresh_nonce  # Sert uniquement à forcer une nouvelle clé de cache.
     results: dict[str, dict] = {}
     tickers = list(yf_tickers)
     # Priorité au chart Yahoo officiel ; OHLC en fallback si le prix ou la Var % manque.
@@ -385,13 +434,20 @@ def fetch_prices(yf_tickers: tuple[str, ...]) -> dict[str, dict]:
         for t in batch:
             quote = quote_data.get(t.upper(), {})
             price, chg = quote.get("price"), quote.get("chg")
-            if price is None:
+            if price is None or chg is None:
                 intraday_closes = _closes(intra_data, t, multi) if intra_data is not None else pd.Series(dtype=float)
                 daily_closes = _closes(daily_data, t, multi) if daily_data is not None else pd.Series(dtype=float)
                 fallback_price, fallback_chg = _price_chg(intraday_closes, daily_closes)
-                price = price if price is not None else fallback_price
-                chg = chg if chg is not None else fallback_chg
-            results[t] = {"price": price, "chg": chg}
+                if price is None:
+                    price = fallback_price
+                if chg is None:
+                    chg = fallback_chg
+            results[t] = {
+                "price": price,
+                "chg": chg,
+                "name": quote.get("name", ""),
+                "error": quote.get("error", ""),
+            }
         if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
             time.sleep(YF_BATCH_PAUSE_SEC)
     return results
@@ -501,41 +557,40 @@ def html_score_mixte(v) -> str:
         '</div>'
     ).format(score, score, value, color)
 
-def fmt_purchase_date(v) -> str:
+def holding_days(v) -> int | None:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
-        return "à vérifier"
+        return None
     try:
-        return pd.to_datetime(v, dayfirst=True, errors="raise").date().strftime("%d-%m-%Y")
+        purchase_date = pd.to_datetime(v, dayfirst=True, errors="raise").date()
+        return (date.today() - purchase_date).days
     except Exception:
-        return str(v).strip()
+        return None
+
 
 def fmt_holding_days(v, required: bool = False) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
+    days = holding_days(v)
+    if days is None:
         return "N/A" if required else "—"
-    try:
-        d = pd.to_datetime(v, dayfirst=True, errors="raise").date()
-        days = (date.today() - d).days
-        if 150 <= days <= 180:
-            return f'<span style="color:#f97316">{days}</span>'
-        return str(days)
-    except Exception:
-        return "N/A" if required else "—"
+    if 150 <= days <= 180:
+        return f'<span style="color:#f97316">{days}</span>'
+    return str(days)
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
-    url = f"https://finance.yahoo.com/quote/{yf_ticker}/" if yf_ticker else "#"
+    encoded_ticker = urllib.parse.quote(str(yf_ticker), safe="") if yf_ticker else ""
+    url = f"https://finance.yahoo.com/quote/{encoded_ticker}/" if encoded_ticker else "#"
+    label = html.escape(str(gf_ticker))
     return (f'<a href="{url}" target="_blank" rel="noopener" title="Yahoo Finance" '
-            f'style="color:#93c5fd;font-family:\'JetBrains Mono\',monospace;'
+            f'style="color:#93c5fd;font-family:"JetBrains Mono",monospace;'
             f'font-size:.78rem;font-weight:500;text-decoration:none;'
-            f'letter-spacing:.02em">{gf_ticker}</a>')
-
+            f'letter-spacing:.02em">{label}</a>')
 def html_link(url) -> str:
     if not url or (isinstance(url, float) and pd.isna(url)): return ""
     u = str(url).strip()
-    if not u.startswith("http"): return ""
-    return (f'<a href="{u}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
+    if not u.startswith(("http://", "https://")): return ""
+    safe_url = html.escape(u, quote=True)
+    return (f'<a href="{safe_url}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
             f'text-decoration:none;font-family:monospace">↗</a>')
-
 COUNTRY_CODES = {
     ".AS": "NL", ".BR": "BE", ".DE": "DE", ".HK": "HK",
     ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
@@ -543,10 +598,12 @@ COUNTRY_CODES = {
     ".TO": "CA", ".WA": "PL", ".AT": "GR", ".CO": "DK",
     ".MI": "IT", ".SW": "CH",
 }
+COUNTRY_SUFFIXES = tuple(sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True))
+
 
 def country_code(ticker: str) -> str:
     t = str(ticker or "").upper().strip()
-    for suffix, code in sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True):
+    for suffix, code in COUNTRY_SUFFIXES:
         if t.endswith(suffix):
             return code
     return "US" if t else ""
@@ -563,72 +620,66 @@ def html_country_flag(ticker: str) -> str:
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
                names: dict,
-               highlight_radar: bool = False,
                holding_required: bool = False) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
-        yf_t   = r.get("yf_ticker")
-        yf_s   = str(yf_t) if pd.notna(yf_t) else ""
-        q      = prices.get(yf_s, {})
+        yf_t = r.get("yf_ticker")
+        yf_s = str(yf_t).strip().upper() if pd.notna(yf_t) else ""
+        q = prices.get(yf_s, {})
 
-        price  = q.get("price") or (r.get("spot_sheet") if pd.notna(r.get("spot_sheet")) else None)
-        chg    = q.get("chg")
-        name   = (r.get("name") or "") if pd.notna(r.get("name")) else ""
-        name   = name or names.get(yf_s, "")
+        price = q.get("price")
+        if price is None and pd.notna(r.get("spot_sheet")):
+            price = r.get("spot_sheet")
+        chg = q.get("chg")
+        name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
+        name = str(name or names.get(yf_s, ""))
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
-        ratio   = compute_ratio(price, buy, exit_)
-        score   = safe_float(compute_score(ratio, r.get("note")))
+        ratio = compute_ratio(price, buy, exit_)
+        score = safe_float(compute_score(ratio, r.get("note")))
         score_sheet = safe_float(r.get("score_sheet"))
         if score is None:
             score = score_sheet
         score_mixte = score_sheet if score_sheet is not None else score
-        upside  = compute_upside(price, fair, trim)
+        upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
         comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
+        days = holding_days(r.get("purchase_date"))
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
-
-        # Mise en surbrillance "sous le radar"
-        radar   = (highlight_radar and score is not None and score >= 85)
         flagged = bool(r.get("flagged", False))
 
         rows.append({
-            "_score":        score if score is not None else -1.0,
+            "_score":        score,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
-            "_upside":       upside if upside is not None else -999.0,
-            "_quality":      quality if quality is not None else -1.0,
+            "_upside":       upside,
+            "_quality":      quality,
             "_price_ok":     price is not None,
             "_ticker":       gf,
             "_name":         name,
-            "_radar":        radar,
             "_flagged":      flagged,
-            # Données brutes pour export XLS
             "_raw": {
                 "MAJ": r.get("last_update").strftime("%d-%m") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
                 "V":        r.get("verif_display", ""),
-                "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
+                "JRS":      days if days is not None else ("N/A" if holding_required else ""),
                 "Pays":     country_code(yf_s),
                 "Ticker":   gf, "Société": name_u,
-                "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
                 "Prix":     price, "Var %": chg, "Upside %": upside,
                 "Score":    round(score) if score is not None else "",
                 "Mixte":    score_mixte,
-                "Buy":      buy, "Fair":  fair, "Trim":  trim, "Exit":  exit_,
+                "Buy":      buy, "Fair": fair, "Trim": trim, "Exit": exit_,
                 "Qual":     int(quality) if quality is not None else "",
                 "Commentaires": comments,
             },
-            # HTML
             "MAJ":      fmt_maj(r.get("last_update")),
-            "V":        r.get("verif_display", ""),
+            "V":        html.escape(str(r.get("verif_display", ""))),
             "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
-            "Société":  f'<span title="{name_u}">{name_html}</span>',
-            "Date d'achat": fmt_purchase_date(r.get("purchase_date")),
+            "Société":  f'<span title="{html.escape(name_u, quote=True)}">{html.escape(name_html)}</span>',
             "Qual":     fmt_note(r.get("note")),
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
@@ -643,22 +694,23 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "↗":        html_link(r.get("url")),
         })
     return rows
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Export XLS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def export_xlsx(rows: list[dict]) -> bytes:
+EXPORT_COLS = (
+    "MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %",
+    "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires",
+)
+
+
+@st.cache_data(show_spinner=False)
+def export_xlsx(raw_rows: tuple[tuple, ...]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    cols = ["MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %",
-            "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim",
-            "Exit", "Commentaires"]
-    ws.append(cols)
-    for r in rows:
-        raw = r["_raw"]
-        ws.append([raw.get(c, "") for c in cols])
-    # Largeurs
+    ws.append(list(EXPORT_COLS))
+    for row in raw_rows:
+        ws.append(list(row))
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = 14
     buf = io.BytesIO()
@@ -716,8 +768,6 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-table td.c { text-align: center; }
 .wl-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.018); }
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
-.wl-radar td { background: rgba(34,197,94,.07) !important; }
-.wl-radar:hover td { background: rgba(34,197,94,.12) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
 .wl-country-flag {
@@ -762,12 +812,7 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
     th = "".join(th_parts)
     trs = []
     for r in rows:
-        if r["_flagged"]:
-            cls = "wl-flagged"
-        elif r["_radar"]:
-            cls = "wl-radar"
-        else:
-            cls = ""
+        cls = "wl-flagged" if r["_flagged"] else ""
         tds = "".join(
             f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
             for c in cols
@@ -791,18 +836,18 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     ], key=f"{key}_t", label_visibility="collapsed")
 
     sort_map = {
-        "Ticker A→Z":     lambda r: r["_ticker"],
-        "Score ↓":        lambda r: -r["_score"],
-        "Score ↑":        lambda r: r["_score"],
-        "Qual ↓":         lambda r: -r["_quality"],
-        "Upside ↓":       lambda r: -r["_upside"],
-        "Var % ↑":        lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
-        "Var % ↓":        lambda r: (r["_chg"] is None, r["_chg"] or 0),
-        "MAJ ↓":          lambda r: r["_maj"] or date.max,
+        "Ticker A→Z": lambda r: r["_ticker"].casefold(),
+        "Score ↓":    lambda r: (r["_score"] is None, -(r["_score"] or 0)),
+        "Score ↑":    lambda r: (r["_score"] is None, r["_score"] or 0),
+        "Qual ↓":     lambda r: (r["_quality"] is None, -(r["_quality"] or 0)),
+        "Upside ↓":   lambda r: (r["_upside"] is None, -(r["_upside"] or 0)),
+        "Var % ↑":    lambda r: (r["_chg"] is None, r["_chg"] or 0),
+        "Var % ↓":    lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
+        "MAJ ↓":      lambda r: (r["_maj"] is None, -r["_maj"].toordinal() if r["_maj"] else 0),
     }
     key_fn = sort_map.get(sort_choice)
     if key_fn:
-        rows.sort(key=key_fn, reverse=(sort_choice == "MAJ ↓"))
+        rows.sort(key=key_fn)
 
     render_table(rows, display_cols)
 
@@ -816,7 +861,8 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
         st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
         _, right = st.columns([3, 1])
         with right:
-            xls_bytes = export_xlsx(rows)
+            raw_rows = tuple(tuple(r["_raw"].get(c, "") for c in EXPORT_COLS) for r in rows)
+            xls_bytes = export_xlsx(raw_rows)
             st.download_button(
                 "Export Excel", data=xls_bytes,
                 file_name=f"watchlist_{key}_{date.today()}.xlsx",
@@ -829,22 +875,23 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 # Onglet Debug
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
+def render_debug(tickers_df: pd.DataFrame, prices: dict) -> None:
     st.subheader("Diagnostic colonnes")
     st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
 
-    # Affichage brut CSV pour vérifier les noms originaux
-    with st.expander("Colonnes brutes du CSV (2 premières lignes)"):
+    # Le CSV brut n'est téléchargé que sur demande, pas à chaque rerun Streamlit.
+    if st.button("Charger l'aperçu brut du CSV", key="debug_raw_csv"):
         try:
-            df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8-sig", header=0,
-                                 dtype=str, nrows=2)
+            df_raw = _read_remote_csv(SHEET_CSV_URL).head(2)
         except Exception:
+            fallback_path = Path(__file__).with_name(CSV_FALLBACK)
             try:
-                df_raw = pd.read_csv(CSV_FALLBACK, encoding="utf-8-sig", header=0,
+                df_raw = pd.read_csv(fallback_path, encoding="utf-8-sig", header=0,
                                      dtype=str, nrows=2)
-            except Exception as e:
-                st.error(str(e)); df_raw = None
+            except Exception as exc:
+                st.error(str(exc))
+                df_raw = None
         if df_raw is not None:
             st.code(str(list(df_raw.columns)))
             st.dataframe(df_raw, use_container_width=True)
@@ -869,6 +916,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 
         older_than_30 = (today - maj_date).days > 30 if maj_date is not None else False
 
+        quote = prices.get(yf.upper(), {})
         debug_rows.append({
             "gf_ticker": row.get("gf_ticker", ""),
             "yf_ticker": yf,
@@ -876,7 +924,9 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
             "MAJ_raw": maj_raw,
             "MAJ_date": maj_date,
             "older_than_30": older_than_30,
-            "price": prices.get(yf, {}).get("price"),
+            "price": quote.get("price"),
+            "variation": quote.get("chg"),
+            "Yahoo_error": quote.get("error", ""),
         })
 
     st.dataframe(pd.DataFrame(debug_rows), use_container_width=True, hide_index=True, height=500)
@@ -886,12 +936,25 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict, names: dict) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 1. Sheet en premier ───────────────────────────────────────────────────────
-with st.spinner("Chargement du Google Sheet…"):
-    try:
-        tickers_df, data_source = load_tickers()
-    except Exception as exc:
-        st.error(str(exc)); st.stop()
+force_sheet_refresh = st.session_state.get("last_action") == "refresh"
+cached_tickers_df = st.session_state.get("tickers_df")
 
+if cached_tickers_df is not None and not force_sheet_refresh:
+    tickers_df = cached_tickers_df.copy(deep=True)
+    data_source = st.session_state.get("data_source", "Google Sheet")
+else:
+    with st.spinner("Chargement du Google Sheet…"):
+        try:
+            tickers_df, data_source = load_tickers()
+            st.session_state["tickers_df"] = tickers_df.copy(deep=True)
+            st.session_state["data_source"] = data_source
+        except Exception as exc:
+            if cached_tickers_df is None:
+                st.error(str(exc))
+                st.stop()
+            st.warning(f"Google Sheet indisponible : données précédentes conservées ({exc}).")
+            tickers_df = cached_tickers_df.copy(deep=True)
+            data_source = st.session_state.get("data_source", "Cache de session")
 if tickers_df.empty:
     st.error("Le DataFrame est vide après chargement. Voici les colonnes brutes du sheet :")
     try:
@@ -1006,21 +1069,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   font-weight: 500 !important; padding: 6px 18px !important; border: none !important;
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
-
-/* ── Champs de saisie ── */
-.stTextInput > div > div > input {
-  background: #141824 !important; border: 1px solid #252d3d !important;
-  border-radius: 8px !important; color: #e2e8f4 !important;
-  font-size: .82rem !important; padding: 8px 12px !important;
-}
-.stTextInput > div > div > input:focus {
-  border-color: #3b82f6 !important;
-  box-shadow: 0 0 0 3px rgba(59,130,246,.15) !important;
-}
-label[data-testid="stWidgetLabel"] p {
-  font-size: .72rem !important; font-weight: 600 !important;
-  color: #5a6a8a !important; text-transform: uppercase; letter-spacing: .07em;
-}
 
 /* ── Selectbox ── */
 .stSelectbox > div > div {
@@ -1142,7 +1190,8 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 render_topbar(len(pf_df), len(watchlist_all_df), last_ts)
 
 def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
-    return tuple(str(t) for t in df["yf_ticker"].dropna() if str(t).strip())
+    normalized = (str(t).strip().upper() for t in df["yf_ticker"].dropna())
+    return tuple(dict.fromkeys(t for t in normalized if t))
 
 def table_cols_with_holding_days() -> list[str]:
     """Colonnes principales, avec JRS placé entre V et Pays."""
@@ -1156,7 +1205,7 @@ all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *asia_yf)))
 def mark_refresh(scope: str) -> None:
     st.session_state["last_action"] = "refresh"
     st.session_state["refresh_scope"] = scope
-    fetch_prices.clear()
+    st.session_state["refresh_nonce"] = time.time_ns()
 
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
@@ -1167,43 +1216,52 @@ active_yf = (
     else all_yf
 )
 
-# ── 2. Noms (Yahoo, rapide) ───────────────────────────────────────────────────
+# ── 2. Cours et noms Yahoo ────────────────────────────────────────────────────
 data_key = all_yf
 same_data_key = st.session_state.get("data_key") == data_key
-cached_names = st.session_state.get("names_data", {})
-name_scope = active_yf if last_action == "refresh" else all_yf
-missing_name_tickers = tuple(t for t in name_scope if not cached_names.get(t))
+cached_prices = dict(st.session_state.get("prices_data", {}))
+fresh_prices: dict[str, dict] = {}
 
 if not all_yf:
-    names = cached_names
-elif same_data_key and last_action != "refresh" and "names_data" in st.session_state:
-    names = st.session_state["names_data"]
-elif last_action == "refresh":
-    names = dict(cached_names)
-    if missing_name_tickers:
-        with st.spinner("Noms des nouveaux tickers…"):
-            names.update(fetch_names(missing_name_tickers))
-    st.session_state["names_data"] = names
-else:
-    with st.spinner("Noms des sociétés…"):
-        names = fetch_names(all_yf)
-    st.session_state["names_data"] = names
-
-# ── 3. Cours (Yahoo) ──────────────────────────────────────────────────────────
-if not all_yf:
-    prices = st.session_state.get("prices_data", {})
-elif same_data_key and last_action != "refresh" and "prices_data" in st.session_state:
-    prices = st.session_state["prices_data"]
+    prices = cached_prices
+elif same_data_key and last_action != "refresh" and cached_prices:
+    prices = cached_prices
 else:
     price_scope = active_yf if last_action == "refresh" else all_yf
     prices_spinner = "Actualisation des cours en temps réel…" if last_action == "refresh" else "Cours en temps réel…"
+    refresh_nonce = st.session_state.get("refresh_nonce", 0) if last_action == "refresh" else 0
     with st.spinner(prices_spinner):
-        fresh_prices = fetch_prices(price_scope)
-    prices = dict(st.session_state.get("prices_data", {}))
+        fresh_prices = fetch_prices(price_scope, refresh_nonce)
+    prices = cached_prices
     prices.update(fresh_prices)
+    prices = {ticker: prices[ticker] for ticker in all_yf if ticker in prices}
     st.session_state["prices_data"] = prices
     st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
+# Le endpoint chart fournit généralement le nom avec le prix. yfinance.info
+# n'est utilisé que pour les nouveaux tickers dont le nom reste manquant.
+names = dict(st.session_state.get("names_data", {}))
+for ticker, quote in fresh_prices.items():
+    if not names.get(ticker) and quote.get("name"):
+        names[ticker] = quote["name"]
+
+sheet_named_tickers = {
+    str(row["yf_ticker"]).strip().upper()
+    for _, row in tickers_df.iterrows()
+    if pd.notna(row.get("name")) and str(row.get("name")).strip()
+}
+name_scope = active_yf if last_action == "refresh" else all_yf
+should_resolve_names = last_action == "refresh" or not same_data_key
+missing_name_tickers = tuple(
+    ticker for ticker in name_scope
+    if ticker not in sheet_named_tickers and not names.get(ticker)
+)
+if should_resolve_names and missing_name_tickers:
+    with st.spinner("Noms des nouveaux tickers…"):
+        names.update(fetch_names(missing_name_tickers))
+
+names = {ticker: names[ticker] for ticker in all_yf if ticker in names}
+st.session_state["names_data"] = names
 st.session_state["data_key"] = data_key
 
 last_ts = st.session_state.get("last_fetch_ts", "—")
@@ -1214,9 +1272,9 @@ ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 render_topbar(len(pf_df), len(watchlist_all_df), last_ts, ok=ok, total=len(all_yf))
 
 # Construire les rows des vues une seule fois
-rows_pf = build_rows(pf_df, prices, names, False, True)
-rows_wl = build_rows(wl_df, prices, names, False, False)
-rows_asia = build_rows(asia_df, prices, names, False, False)
+rows_pf = build_rows(pf_df, prices, names, True)
+rows_wl = build_rows(wl_df, prices, names, False)
+rows_asia = build_rows(asia_df, prices, names, False)
 
 tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
@@ -1235,5 +1293,5 @@ with tab3:
     st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
     render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab4:
-    render_debug(tickers_df, prices, names)
+    render_debug(tickers_df, prices)
 
