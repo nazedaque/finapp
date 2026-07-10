@@ -54,6 +54,7 @@ COL_WIDTHS = {
 }
 CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
+GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -740,7 +741,12 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   color: #c8d4e8;
   table-layout: fixed;
 }
-.wl-table thead tr { position: sticky; top: 0; z-index: 2; }
+.wl-table thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: 0 6px 12px rgba(0,0,0,.34);
+}
 .wl-table th {
   background: #0f1320;
   color: #4a5980;
@@ -766,6 +772,14 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-variant-numeric: tabular-nums;
 }
 .wl-table td.c { text-align: center; }
+.wl-table a,
+.wl-table a:hover,
+.wl-table a:focus,
+.wl-table a:visited { text-decoration: none !important; }
+.wl-table th.group-start,
+.wl-table td.group-start {
+  border-left: 1px solid rgba(109,130,168,.28);
+}
 .wl-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.018); }
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
@@ -781,7 +795,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   height: 14px;
   width: 100%;
   margin: 0 auto;
-  background: #b6c0cb;
+  background: #8994a3;
   display: block;
   border-radius: 3px;
   overflow: hidden;
@@ -805,16 +819,20 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
             skip_next = False
             continue
         if c == "Score" and idx + 1 < len(cols) and cols[idx + 1] == "Mixte":
-            th_parts.append('<th class="c" colspan="2" title="Score">Score</th>')
+            th_parts.append('<th class="c group-start" colspan="2" title="Score">Score</th>')
             skip_next = True
         else:
-            th_parts.append(f'<th class="{"c" if c in CENTER else ""}" title="{c}">{c}</th>')
+            classes = " ".join(filter(None, (
+                "c" if c in CENTER else "",
+                "group-start" if c in GROUP_STARTS else "",
+            )))
+            th_parts.append(f'<th class="{classes}" title="{c}">{c}</th>')
     th = "".join(th_parts)
     trs = []
     for r in rows:
         cls = "wl-flagged" if r["_flagged"] else ""
         tds = "".join(
-            f'<td class="{"c" if c in CENTER else ""}">{r[c]}</td>'
+            f'<td class="{" ".join(filter(None, ("c" if c in CENTER else "", "group-start" if c in GROUP_STARTS else "")))}">{r[c]}</td>'
             for c in cols
         )
         trs.append(f'<tr class="{cls}">{tds}</tr>')
@@ -996,8 +1014,8 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
   border-radius: 14px;
-  padding: 14px 24px;
-  margin-bottom: 12px;
+  padding: 11px 22px;
+  margin-bottom: 10px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
 .wl-stats {
@@ -1011,7 +1029,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 28px;
+  padding: 0 24px;
 }
 .wl-stat + .wl-stat {
   border-left: 1px solid #252d3d;
@@ -1022,10 +1040,10 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   text-transform: uppercase;
   letter-spacing: .1em;
   color: #4a5980;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 .wl-stat-val {
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   font-weight: 700;
   color: #e2e8f4;
   font-variant-numeric: tabular-nums;
@@ -1207,6 +1225,18 @@ def mark_refresh(scope: str) -> None:
     st.session_state["refresh_scope"] = scope
     st.session_state["refresh_nonce"] = time.time_ns()
 
+
+def render_refresh_button(scope: str) -> None:
+    _, button_col = st.columns([7, 1])
+    with button_col:
+        st.button(
+            "Actualiser",
+            key=f"refresh_{scope}",
+            use_container_width=True,
+            on_click=mark_refresh,
+            args=(scope,),
+        )
+
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
 active_yf = (
@@ -1284,13 +1314,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
-    st.button("Actualiser", key="refresh_pf", use_container_width=True, on_click=mark_refresh, args=("pf",))
+    render_refresh_button("pf")
     render_tab(rows_pf, key="pf", display_cols=main_cols)
 with tab2:
-    st.button("Actualiser", key="refresh_wl", use_container_width=True, on_click=mark_refresh, args=("wl",))
+    render_refresh_button("wl")
     render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
-    st.button("Actualiser", key="refresh_asia", use_container_width=True, on_click=mark_refresh, args=("asia",))
+    render_refresh_button("asia")
     render_tab(rows_asia, key="asia", display_cols=main_cols)
 with tab4:
     render_debug(tickers_df, prices)
