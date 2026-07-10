@@ -29,7 +29,7 @@ st.set_page_config(page_title="Watchlist", page_icon=None, layout="wide",
 SHEET_ID      = "1KQ0eolfB-UH-N-jQo2WDxsmVNT3I4IhiTEbdIfcPvbA"
 SHEET_NAME    = "Travail"
 SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-                 f"/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}")
+                 f"/export?format=csv&sheet={SHEET_NAME}")
 CSV_FALLBACK      = "tickers.csv"
 REFRESH_TTL       = 15 * 60
 BATCH_SIZE        = 50
