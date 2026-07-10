@@ -46,11 +46,11 @@ DISPLAY_COLS = [
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "58px", "V": "34px", "JRS": "38px", "Pays": "42px", "Ticker": "72px", "Société": "180px", "Qual": "52px",
-    "Prix": "70px", "Var %": "70px", "Upside": "66px",
-    "Score": "44px", "Mixte": "154px", "Buy": "66px", "Fair": "66px", "Trim": "66px", "Exit": "66px",
-    "Commentaires": "220px",
-    "↗": "36px",
+    "MAJ": "46px", "V": "27px", "JRS": "30px", "Pays": "34px", "Ticker": "58px", "Société": "144px", "Qual": "42px",
+    "Prix": "56px", "Var %": "56px", "Upside": "53px",
+    "Score": "35px", "Mixte": "123px", "Buy": "53px", "Fair": "53px", "Trim": "53px", "Exit": "53px",
+    "Commentaires": "176px",
+    "↗": "29px",
 }
 CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
@@ -728,7 +728,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   overflow-x: auto;
   max-height: none;
   overflow-y: visible;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid #252d3d;
   background: #141824;
   box-shadow: 0 4px 24px rgba(0,0,0,.4);
@@ -754,7 +754,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-size: .7rem;
   letter-spacing: .08em;
   text-transform: uppercase;
-  padding: 11px 10px;
+  padding: 9px 8px;
   text-align: left;
   border-bottom: 1px solid #252d3d;
   white-space: nowrap;
@@ -763,7 +763,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 }
 .wl-table th.c { text-align: center; }
 .wl-table td {
-  padding: 7px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid #1a2030;
   vertical-align: middle;
   overflow: hidden;
@@ -786,23 +786,23 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-flagged:hover td { background: #3a2875 !important; }
 .wl-country-flag {
   display: inline-block;
-  width: 19px;
-  line-height: 13px;
+  width: 15px;
+  line-height: 10px;
   border-radius: 2px;
   vertical-align: middle;
 }
 .score-spark {
-  height: 14px;
+  height: 11px;
   width: 100%;
   margin: 0 auto;
   background: #8994a3;
   display: block;
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 .score-spark-fill {
   height: 100%;
-  border-radius: 3px 0 0 3px;
+  border-radius: 2px 0 0 2px;
 }
 </style>"""
 
@@ -1015,16 +1015,9 @@ st.markdown("""
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
-.block-container { padding-top: 3rem !important; max-width: 100% !important; }
+.block-container { padding-top: 2.4rem !important; max-width: 100% !important; }
+html { font-size: 80%; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
-
-/* Équivalent du zoom navigateur à 80 % sur desktop. */
-@media (min-width: 900px) {
-  body {
-    zoom: .8;
-    width: 125%;
-  }
-}
 
 /* ── Header custom ── */
 .wl-topbar {
@@ -1033,9 +1026,9 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   justify-content: center;
   background: linear-gradient(135deg, #161b2a 0%, #111624 100%);
   border: 1px solid #252d3d;
-  border-radius: 14px;
-  padding: 11px 22px;
-  margin-bottom: 10px;
+  border-radius: 11px;
+  padding: 9px 18px;
+  margin-bottom: 8px;
   box-shadow: 0 2px 16px rgba(0,0,0,.4);
 }
 .wl-stats {
@@ -1049,7 +1042,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 19px;
 }
 .wl-stat + .wl-stat {
   border-left: 1px solid #252d3d;
@@ -1075,16 +1068,16 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 /* ── Boutons ── */
 .stButton > button[kind="primary"] {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
-  border: none !important; border-radius: 8px !important;
+  border: none !important; border-radius: 6px !important;
   color: #fff !important; font-weight: 600 !important;
-  font-size: .8rem !important; padding: 0 18px !important;
+  font-size: .8rem !important; padding: 0 14px !important;
   box-shadow: 0 2px 8px rgba(59,130,246,.4) !important;
   white-space: nowrap !important;
 }
 .stButton > button[kind="primary"]:hover { opacity: .88 !important; }
 .stButton > button {
   background: #1a1f2e !important; border: 1px solid #252d3d !important;
-  border-radius: 8px !important; color: #8899bb !important;
+  border-radius: 6px !important; color: #8899bb !important;
   font-size: .8rem !important; font-weight: 500 !important;
   white-space: nowrap !important;
 }
@@ -1093,25 +1086,25 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 /* ── Download ── */
 .stDownloadButton > button {
   background: #1a1f2e !important; border: 1px solid #252d3d !important;
-  border-radius: 8px !important; color: #5a6a8a !important; font-size: .75rem !important;
+  border-radius: 6px !important; color: #5a6a8a !important; font-size: .75rem !important;
 }
 
 /* ── Onglets ── */
 .stTabs [data-baseweb="tab-list"] {
-  background: #141824; border-radius: 10px; padding: 4px; gap: 2px;
+  background: #141824; border-radius: 8px; padding: 3px; gap: 2px;
   border: 1px solid #252d3d;
 }
 .stTabs [data-baseweb="tab"] {
-  background: transparent !important; border-radius: 7px !important;
+  background: transparent !important; border-radius: 6px !important;
   color: #5a6a8a !important; font-size: .8rem !important;
-  font-weight: 500 !important; padding: 6px 18px !important; border: none !important;
+  font-weight: 500 !important; padding: 5px 14px !important; border: none !important;
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
 
 /* ── Selectbox ── */
 .stSelectbox > div > div {
   background: #141824 !important; border: 1px solid #252d3d !important;
-  border-radius: 8px !important; color: #e2e8f4 !important; font-size: .82rem !important;
+  border-radius: 6px !important; color: #e2e8f4 !important; font-size: .82rem !important;
 }
 
 /* ── Misc ── */
@@ -1119,11 +1112,11 @@ hr { border-color: #1e2535 !important; }
 .stCaption, .stCaption p { color: #3a4560 !important; font-size: .72rem !important; }
 .stWarning {
   background: rgba(251,191,36,.07) !important; border: 1px solid rgba(251,191,36,.3) !important;
-  border-radius: 10px !important; color: #fbbf24 !important;
+  border-radius: 8px !important; color: #fbbf24 !important;
 }
 .stInfo {
   background: rgba(59,130,246,.07) !important; border: 1px solid rgba(59,130,246,.2) !important;
-  border-radius: 10px !important;
+  border-radius: 8px !important;
 }
 </style>
 """, unsafe_allow_html=True)
