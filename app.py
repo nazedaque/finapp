@@ -496,7 +496,8 @@ def safe_float(v) -> float | None:
 
 def fmt_price(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    return f"{float(v):,.2f}"
+    value = float(v)
+    return f"{value:,.0f}" if value > 1_000 else f"{value:,.2f}"
 
 
 def fmt_target(v, hide_decimals: bool = False) -> str:
@@ -646,7 +647,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
         target_values = tuple(safe_float(value) for value in (buy, fair, trim, exit_))
         hide_target_decimals = any(
-            value is not None and value > 10_000 for value in target_values
+            value is not None and value > 1_000 for value in target_values
         )
         ratio = compute_ratio(price, buy, exit_)
         score = safe_float(compute_score(ratio, r.get("note")))
