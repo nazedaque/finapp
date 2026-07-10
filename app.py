@@ -55,6 +55,8 @@ COL_WIDTHS = {
 CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
+HEADER_CENTER = CENTER | {"Commentaires"}
+HEADER_LABELS = {"Pays": "EXC"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -496,6 +498,12 @@ def fmt_price(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return f"{float(v):,.2f}"
 
+
+def fmt_target(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    value = float(v)
+    return f"{value:,.0f}" if value > 10_000 else f"{value:,.2f}"
+
 def fmt_note(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(int(float(v)))
@@ -533,15 +541,14 @@ def html_upside(v) -> str:
     return f"{a}{v:.1f}%"
 
 def fmt_verif(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
+    if v is None or pd.isna(v):
         return ""
-    s = str(v).strip()
-    if not s or s.lower() in ("nan", "none"):
+    value = str(v).strip()
+    if not value:
         return ""
-    n = parse_num(s)
-    if n is not None:
-        return f"{n:g}"
-    return s
+    if re.fullmatch(r"[+-]?[0-9]+,[0-9]+", value):
+        return value.replace(",", ".")
+    return value
 
 def html_score_mixte(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -687,10 +694,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
             "Mixte":    html_score_mixte(score_mixte),
-            "Buy":      fmt_price(buy),
-            "Fair":     fmt_price(fair),
-            "Trim":     fmt_price(trim),
-            "Exit":     fmt_price(exit_),
+            "Buy":      fmt_target(buy),
+            "Fair":     fmt_target(fair),
+            "Trim":     fmt_target(trim),
+            "Exit":     fmt_target(exit_),
             "Commentaires": html.escape(comments),
             "↗":        html_link(r.get("url")),
         })
@@ -709,7 +716,7 @@ EXPORT_COLS = (
 def export_xlsx(raw_rows: tuple[tuple, ...]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(list(EXPORT_COLS))
+    ws.append([HEADER_LABELS.get(column, column) for column in EXPORT_COLS])
     for row in raw_rows:
         ws.append(list(row))
     for col in ws.columns:
@@ -823,10 +830,11 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
             skip_next = True
         else:
             classes = " ".join(filter(None, (
-                "c" if c in CENTER else "",
+                "c" if c in HEADER_CENTER else "",
                 "group-start" if c in GROUP_STARTS else "",
             )))
-            th_parts.append(f'<th class="{classes}" title="{c}">{c}</th>')
+            label = HEADER_LABELS.get(c, c)
+            th_parts.append(f'<th class="{classes}" title="{label}">{label}</th>')
     th = "".join(th_parts)
     trs = []
     for r in rows:
@@ -849,7 +857,7 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
 
 def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None,
                refresh_scope: str | None = None) -> None:
-    sort_col, refresh_col = st.columns([10, 1], gap="small")
+    sort_col, refresh_col = st.columns([9, 2], gap="small")
     with sort_col:
         sort_choice = st.selectbox("Tri", [
             "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
