@@ -847,11 +847,23 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None) -> None:
-    sort_choice = st.selectbox("Tri", [
-        "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
-        "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓",
-    ], key=f"{key}_t", label_visibility="collapsed")
+def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None,
+               refresh_scope: str | None = None) -> None:
+    sort_col, refresh_col = st.columns([10, 1], gap="small")
+    with sort_col:
+        sort_choice = st.selectbox("Tri", [
+            "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
+            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓",
+        ], key=f"{key}_t", label_visibility="collapsed")
+    with refresh_col:
+        if refresh_scope:
+            st.button(
+                "Actualiser",
+                key=f"refresh_{refresh_scope}",
+                use_container_width=True,
+                on_click=mark_refresh,
+                args=(refresh_scope,),
+            )
 
     sort_map = {
         "Ticker A→Z": lambda r: r["_ticker"].casefold(),
@@ -1005,6 +1017,14 @@ st.markdown("""
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
 .block-container { padding-top: 3rem !important; max-width: 100% !important; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+
+/* Équivalent du zoom navigateur à 80 % sur desktop. */
+@media (min-width: 900px) {
+  body {
+    zoom: .8;
+    width: 125%;
+  }
+}
 
 /* ── Header custom ── */
 .wl-topbar {
@@ -1226,16 +1246,6 @@ def mark_refresh(scope: str) -> None:
     st.session_state["refresh_nonce"] = time.time_ns()
 
 
-def render_refresh_button(scope: str) -> None:
-    _, button_col = st.columns([7, 1])
-    with button_col:
-        st.button(
-            "Actualiser",
-            key=f"refresh_{scope}",
-            use_container_width=True,
-            on_click=mark_refresh,
-            args=(scope,),
-        )
 
 last_action = st.session_state.pop("last_action", "")
 refresh_scope = st.session_state.pop("refresh_scope", "")
@@ -1314,14 +1324,11 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
-    render_refresh_button("pf")
-    render_tab(rows_pf, key="pf", display_cols=main_cols)
+    render_tab(rows_pf, key="pf", display_cols=main_cols, refresh_scope="pf")
 with tab2:
-    render_refresh_button("wl")
-    render_tab(rows_wl, key="wl", display_cols=main_cols)
+    render_tab(rows_wl, key="wl", display_cols=main_cols, refresh_scope="wl")
 with tab3:
-    render_refresh_button("asia")
-    render_tab(rows_asia, key="asia", display_cols=main_cols)
+    render_tab(rows_asia, key="asia", display_cols=main_cols, refresh_scope="asia")
 with tab4:
     render_debug(tickers_df, prices)
 
