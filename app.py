@@ -499,10 +499,10 @@ def fmt_price(v) -> str:
     return f"{float(v):,.2f}"
 
 
-def fmt_target(v) -> str:
+def fmt_target(v, hide_decimals: bool = False) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     value = float(v)
-    return f"{value:,.0f}" if value > 10_000 else f"{value:,.2f}"
+    return f"{value:,.0f}" if hide_decimals else f"{value:,.2f}"
 
 def fmt_note(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
@@ -644,6 +644,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
+        target_values = tuple(safe_float(value) for value in (buy, fair, trim, exit_))
+        hide_target_decimals = any(
+            value is not None and value > 10_000 for value in target_values
+        )
         ratio = compute_ratio(price, buy, exit_)
         score = safe_float(compute_score(ratio, r.get("note")))
         score_sheet = safe_float(r.get("score_sheet"))
@@ -694,10 +698,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
             "Mixte":    html_score_mixte(score_mixte),
-            "Buy":      fmt_target(buy),
-            "Fair":     fmt_target(fair),
-            "Trim":     fmt_target(trim),
-            "Exit":     fmt_target(exit_),
+            "Buy":      fmt_target(buy, hide_target_decimals),
+            "Fair":     fmt_target(fair, hide_target_decimals),
+            "Trim":     fmt_target(trim, hide_target_decimals),
+            "Exit":     fmt_target(exit_, hide_target_decimals),
             "Commentaires": html.escape(comments),
             "↗":        html_link(r.get("url")),
         })
