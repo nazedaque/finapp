@@ -46,8 +46,8 @@ DISPLAY_COLS = [
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "V": "27px", "JRS": "30px", "Pays": "34px", "Ticker": "58px", "Société": "144px", "Qual": "42px",
-    "Prix": "56px", "Var %": "56px", "Upside": "53px",
+    "MAJ": "46px", "V": "39px", "JRS": "30px", "Pays": "34px", "Ticker": "58px", "Société": "144px", "Qual": "42px",
+    "Prix": "44px", "Var %": "56px", "Upside": "53px",
     "Score": "35px", "Mixte": "123px", "Buy": "53px", "Fair": "53px", "Trim": "53px", "Exit": "53px",
     "Commentaires": "176px",
     "↗": "29px",
