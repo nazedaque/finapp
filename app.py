@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1010,7 +1009,7 @@ def render_table(rows: list[dict], key: str,
 })();
 </script>
 """.replace("__TABLE_ID__", json.dumps(table_id))
-    components.html(script, height=0)
+    st.html(script, unsafe_allow_javascript=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Rendu d'un onglet
@@ -1035,7 +1034,7 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
             st.button(
                 "Actualiser",
                 key=f"refresh_{refresh_scope}",
-                use_container_width=True,
+                width="stretch",
                 on_click=mark_refresh,
                 args=(refresh_scope,),
             )
@@ -1070,7 +1069,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict) -> None:
                 df_raw = None
         if df_raw is not None:
             st.code(str(list(df_raw.columns)))
-            st.dataframe(df_raw, use_container_width=True)
+            st.dataframe(df_raw, width="stretch")
 
     if tickers_df.empty:
         st.error("DataFrame vide — impossible d'afficher les diagnostics.")
@@ -1105,7 +1104,7 @@ def render_debug(tickers_df: pd.DataFrame, prices: dict) -> None:
             "Yahoo_error": quote.get("error", ""),
         })
 
-    st.dataframe(pd.DataFrame(debug_rows), use_container_width=True, hide_index=True, height=500)
+    st.dataframe(pd.DataFrame(debug_rows), width="stretch", hide_index=True, height=500)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APP PRINCIPALE
@@ -1138,7 +1137,7 @@ if tickers_df.empty:
     except Exception:
         df_raw = pd.read_csv(CSV_FALLBACK, header=0, dtype=str, nrows=3)
     st.code(str(list(df_raw.columns)))
-    st.dataframe(df_raw, use_container_width=True)
+    st.dataframe(df_raw, width="stretch")
     st.stop()
 
 ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI", ".HK")
@@ -1273,7 +1272,7 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-components.html("""
+st.html("""
 <script>
 (function () {
   const parentWindow = window.parent;
@@ -1329,7 +1328,7 @@ components.html("""
   }
 })();
 </script>
-""", height=0)
+""", unsafe_allow_javascript=True)
 
 # ── Alertes doublons ──────────────────────────────────────────────────────────
 dupes = st.session_state.get("ticker_dupes", [])
