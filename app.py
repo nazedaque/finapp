@@ -46,7 +46,7 @@ DISPLAY_COLS = [
     "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires", "↗",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "V": "41px", "JRS": "30px", "Pays": "34px", "Ticker": "59px", "Société": "145px", "Qual": "42px",
+    "MAJ": "46px", "V": "41px", "JRS": "32px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "57px", "Upside": "53px",
     "Score": "35px", "Mixte": "124px", "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
     "Commentaires": "177px",
@@ -1161,7 +1161,18 @@ st.markdown("""
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] { background: #0f1117 !important; }
 [data-testid="stHeader"] { background: rgba(15,17,23,.85) !important; backdrop-filter: blur(8px); }
-.block-container { padding-top: 2.4rem !important; max-width: 100% !important; }
+.block-container {
+  padding-top: 2.4rem !important;
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+  max-width: 100% !important;
+}
+@media (max-width: 900px) {
+  .block-container {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
 html { font-size: 80%; }
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 
