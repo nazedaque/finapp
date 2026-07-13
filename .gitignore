@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+app_sauvegarde_manuelle.py
+/devcontainer.json
+.streamlit/secrets.toml

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import openpyxl
+
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -57,6 +57,20 @@ CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte"
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 HEADER_CENTER = CENTER | {"Commentaires"}
 HEADER_LABELS = {"Pays": "EXC"}
+SORTABLE_COLUMNS = {
+    "MAJ": "number",
+    "V": "auto",
+    "JRS": "number",
+    "Pays": "text",
+    "Ticker": "text",
+    "Société": "text",
+    "Qual": "number",
+    "Prix": "number",
+    "Upside": "number",
+    "Var %": "number",
+    "Score": "number",
+    "Commentaires": "text",
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Utilitaires
@@ -674,17 +688,18 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_ticker":       gf,
             "_name":         name,
             "_flagged":      flagged,
-            "_raw": {
-                "MAJ": r.get("last_update").strftime("%d-%m") if pd.notna(r.get("last_update")) and r.get("last_update") else "",
-                "V":        r.get("verif_display", ""),
-                "JRS":      days if days is not None else ("N/A" if holding_required else ""),
-                "Pays":     country_code(yf_s),
-                "Ticker":   gf, "Société": name_u,
-                "Prix":     price, "Var %": chg, "Upside %": upside,
-                "Score":    round(score) if score is not None else "",
-                "Mixte":    score_mixte,
-                "Buy":      buy, "Fair": fair, "Trim": trim, "Exit": exit_,
-                "Qual":     int(quality) if quality is not None else "",
+            "_sort": {
+                "MAJ": r.get("last_update").toordinal() if isinstance(r.get("last_update"), date) else None,
+                "V": r.get("verif_display", ""),
+                "JRS": days,
+                "Pays": country_code(yf_s),
+                "Ticker": gf,
+                "Société": name_u,
+                "Qual": quality,
+                "Prix": price,
+                "Upside": upside,
+                "Var %": chg,
+                "Score": score,
                 "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
@@ -707,29 +722,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "↗":        html_link(r.get("url")),
         })
     return rows
-# ══════════════════════════════════════════════════════════════════════════════
-# Export XLS
-# ══════════════════════════════════════════════════════════════════════════════
-
-EXPORT_COLS = (
-    "MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %",
-    "Upside %", "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires",
-)
-
-
-@st.cache_data(show_spinner=False)
-def export_xlsx(raw_rows: tuple[tuple, ...]) -> bytes:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append([HEADER_LABELS.get(column, column) for column in EXPORT_COLS])
-    for row in raw_rows:
-        ws.append(list(row))
-    for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 14
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Tableau HTML
 # ══════════════════════════════════════════════════════════════════════════════
@@ -774,6 +766,39 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   text-overflow: ellipsis;
 }
 .wl-table th.c { text-align: center; }
+.wl-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.wl-table th.sortable::after {
+  content: "↕";
+  margin-left: 4px;
+  color: #6f83ad;
+  opacity: .55;
+}
+.wl-table th.sortable[aria-sort="ascending"]::after {
+  content: "▲";
+  opacity: 1;
+  color: #93c5fd;
+}
+.wl-table th.sortable[aria-sort="descending"]::after {
+  content: "▼";
+  opacity: 1;
+  color: #93c5fd;
+}
+.wl-table th.sortable:focus-visible {
+  outline: 1px solid #3b82f6;
+  outline-offset: -2px;
+}
+.wl-sort-help {
+  display: flex;
+  align-items: center;
+  min-height: 2.35rem;
+  padding: 0 4px;
+  color: #4a5980;
+  font-size: .72rem;
+  letter-spacing: .03em;
+}
 .wl-table td {
   padding: 6px 8px;
   border-bottom: 1px solid #1a2030;
@@ -818,43 +843,174 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 }
 </style>"""
 
-def render_table(rows: list[dict], display_cols: list[str] | None = None) -> None:
-    if not rows: st.info("Aucun titre."); return
+def _sort_attr(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return html.escape(str(value), quote=True)
+
+
+def render_table(rows: list[dict], key: str,
+                 display_cols: list[str] | None = None) -> None:
+    if not rows:
+        st.info("Aucun titre.")
+        return
+
     cols = display_cols or DISPLAY_COLS
+    table_id = f"wl-table-{key}"
     colgroup = "<colgroup>" + "".join(
-        f'<col style="width:{COL_WIDTHS.get(c,"auto")}">' for c in cols
+        f'<col style="width:{COL_WIDTHS.get(c, "auto")}">' for c in cols
     ) + "</colgroup>"
+
     th_parts = []
     skip_next = False
-    for idx, c in enumerate(cols):
+    for idx, column in enumerate(cols):
         if skip_next:
             skip_next = False
             continue
-        if c == "Score" and idx + 1 < len(cols) and cols[idx + 1] == "Mixte":
-            th_parts.append('<th class="c group-start" colspan="2" title="Score">Score</th>')
+
+        label = HEADER_LABELS.get(column, column)
+        sortable = column in SORTABLE_COLUMNS
+        classes = " ".join(filter(None, (
+            "c" if column in HEADER_CENTER else "",
+            "group-start" if column in GROUP_STARTS else "",
+            "sortable" if sortable else "",
+        )))
+        initial_sort = "descending" if column == "Score" else "none"
+        sort_attrs = (
+            f' data-column="{idx}" data-sort-type="{SORTABLE_COLUMNS[column]}"'
+            f' aria-sort="{initial_sort}" tabindex="0" role="button"'
+            if sortable else ""
+        )
+        title = f"{label} — cliquer pour trier" if sortable else label
+
+        if column == "Score" and idx + 1 < len(cols) and cols[idx + 1] == "Mixte":
+            th_parts.append(
+                f'<th class="{classes}" colspan="2" title="{title}"{sort_attrs}>{label}</th>'
+            )
             skip_next = True
         else:
-            classes = " ".join(filter(None, (
-                "c" if c in HEADER_CENTER else "",
-                "group-start" if c in GROUP_STARTS else "",
-            )))
-            label = HEADER_LABELS.get(c, c)
-            th_parts.append(f'<th class="{classes}" title="{label}">{label}</th>')
-    th = "".join(th_parts)
+            th_parts.append(
+                f'<th class="{classes}" title="{title}"{sort_attrs}>{label}</th>'
+            )
+
     trs = []
-    for r in rows:
-        cls = "wl-flagged" if r["_flagged"] else ""
-        tds = "".join(
-            f'<td class="{" ".join(filter(None, ("c" if c in CENTER else "", "group-start" if c in GROUP_STARTS else "")))}">{r[c]}</td>'
-            for c in cols
-        )
-        trs.append(f'<tr class="{cls}">{tds}</tr>')
+    for row in rows:
+        row_class = "wl-flagged" if row["_flagged"] else ""
+        td_parts = []
+        for column in cols:
+            classes = " ".join(filter(None, (
+                "c" if column in CENTER else "",
+                "group-start" if column in GROUP_STARTS else "",
+            )))
+            sort_value = _sort_attr(row.get("_sort", {}).get(column))
+            td_parts.append(
+                f'<td class="{classes}" data-sort-value="{sort_value}">{row[column]}</td>'
+            )
+        trs.append(f'<tr class="{row_class}">{"".join(td_parts)}</tr>')
+
     st.markdown(
-        CSS + f'<div class="wl-wrap"><table class="wl-table">'
-        f'{colgroup}<thead><tr>{th}</tr></thead>'
+        CSS + f'<div class="wl-wrap"><table id="{table_id}" class="wl-table">'
+        f'{colgroup}<thead><tr>{"".join(th_parts)}</tr></thead>'
         f'<tbody>{"".join(trs)}</tbody></table></div>',
         unsafe_allow_html=True,
     )
+
+    script = """
+<script>
+(function () {
+  const tableId = __TABLE_ID__;
+
+  function bindSort(attempt) {
+    const doc = window.parent.document;
+    const table = doc.getElementById(tableId);
+    if (!table) {
+      if (attempt < 10) {
+        window.setTimeout(function () { bindSort(attempt + 1); }, 50);
+      }
+      return;
+    }
+    if (table.dataset.sortBound === "1") return;
+    table.dataset.sortBound = "1";
+
+    const headers = Array.from(table.querySelectorAll("th.sortable"));
+    const tbody = table.tBodies[0];
+    const collator = new Intl.Collator("fr", {
+      numeric: true,
+      sensitivity: "base"
+    });
+    const initialHeader = headers.find(function (header) {
+      return header.getAttribute("aria-sort") !== "none";
+    });
+    let activeColumn = initialHeader ? Number(initialHeader.dataset.column) : -1;
+    let direction = initialHeader?.getAttribute("aria-sort") === "descending" ? -1 : 1;
+
+    function isBlank(value) {
+      return value === null || value === undefined || String(value).trim() === "";
+    }
+
+    function compareValues(a, b, type) {
+      const blankA = isBlank(a);
+      const blankB = isBlank(b);
+      if (blankA && blankB) return 0;
+      if (blankA) return 1;
+      if (blankB) return -1;
+
+      if (type === "number") {
+        return (Number(a) - Number(b)) * direction;
+      }
+
+      if (type === "auto") {
+        const numberA = Number(a);
+        const numberB = Number(b);
+        if (Number.isFinite(numberA) && Number.isFinite(numberB)) {
+          return (numberA - numberB) * direction;
+        }
+      }
+
+      return collator.compare(String(a), String(b)) * direction;
+    }
+
+    function sortBy(header) {
+      const column = Number(header.dataset.column);
+      const type = header.dataset.sortType;
+      direction = activeColumn === column ? -direction : 1;
+      activeColumn = column;
+
+      const rows = Array.from(tbody.rows);
+      rows.sort(function (rowA, rowB) {
+        const valueA = rowA.cells[column]?.dataset.sortValue ?? "";
+        const valueB = rowB.cells[column]?.dataset.sortValue ?? "";
+        return compareValues(valueA, valueB, type);
+      });
+      rows.forEach(function (row) { tbody.appendChild(row); });
+
+      headers.forEach(function (item) {
+        item.setAttribute("aria-sort", "none");
+      });
+      header.setAttribute("aria-sort", direction === 1 ? "ascending" : "descending");
+    }
+
+    headers.forEach(function (header) {
+      header.addEventListener("click", function () { sortBy(header); });
+      header.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          sortBy(header);
+        }
+      });
+    });
+  }
+
+  bindSort(0);
+})();
+</script>
+""".replace("__TABLE_ID__", json.dumps(table_id))
+    components.html(script, height=0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Rendu d'un onglet
@@ -862,12 +1018,18 @@ def render_table(rows: list[dict], display_cols: list[str] | None = None) -> Non
 
 def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None,
                refresh_scope: str | None = None) -> None:
-    sort_col, refresh_col = st.columns([9, 2], gap="small")
-    with sort_col:
-        sort_choice = st.selectbox("Tri", [
-            "Score ↓", "Score ↑", "Ticker A→Z", "Qual ↓",
-            "Upside ↓", "Var % ↑", "Var % ↓", "MAJ ↓",
-        ], key=f"{key}_t", label_visibility="collapsed")
+    # Conserve la vue initiale historique : Score du plus grand au plus petit.
+    rows.sort(key=lambda row: (
+        row["_score"] is None,
+        -(row["_score"] or 0),
+    ))
+
+    help_col, refresh_col = st.columns([9, 2], gap="small")
+    with help_col:
+        st.markdown(
+            '<div class="wl-sort-help">Tri : cliquez sur un en-tête de colonne</div>',
+            unsafe_allow_html=True,
+        )
     with refresh_col:
         if refresh_scope:
             st.button(
@@ -878,41 +1040,12 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
                 args=(refresh_scope,),
             )
 
-    sort_map = {
-        "Ticker A→Z": lambda r: r["_ticker"].casefold(),
-        "Score ↓":    lambda r: (r["_score"] is None, -(r["_score"] or 0)),
-        "Score ↑":    lambda r: (r["_score"] is None, r["_score"] or 0),
-        "Qual ↓":     lambda r: (r["_quality"] is None, -(r["_quality"] or 0)),
-        "Upside ↓":   lambda r: (r["_upside"] is None, -(r["_upside"] or 0)),
-        "Var % ↑":    lambda r: (r["_chg"] is None, r["_chg"] or 0),
-        "Var % ↓":    lambda r: (r["_chg"] is None, -(r["_chg"] or 0)),
-        "MAJ ↓":      lambda r: (r["_maj"] is None, -r["_maj"].toordinal() if r["_maj"] else 0),
-    }
-    key_fn = sort_map.get(sort_choice)
-    if key_fn:
-        rows.sort(key=key_fn)
+    render_table(rows, key=key, display_cols=display_cols)
 
-    render_table(rows, display_cols)
-
-    missing = [r["_ticker"] for r in rows if not r["_price_ok"]]
+    missing = [row["_ticker"] for row in rows if not row["_price_ok"]]
     if missing:
         with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
             st.write(", ".join(missing))
-
-    # Export Excel — sous le tableau, aligné à droite, avec espacement
-    if rows:
-        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
-        _, right = st.columns([3, 1])
-        with right:
-            raw_rows = tuple(tuple(r["_raw"].get(c, "") for c in EXPORT_COLS) for r in rows)
-            xls_bytes = export_xlsx(raw_rows)
-            st.download_button(
-                "Export Excel", data=xls_bytes,
-                file_name=f"watchlist_{key}_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"{key}_xls",
-                use_container_width=True,
-            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Onglet Debug
@@ -1114,11 +1247,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 }
 .stTabs [aria-selected="true"] { background: #252d3d !important; color: #e2e8f4 !important; }
 
-/* ── Selectbox ── */
-.stSelectbox > div > div {
-  background: #141824 !important; border: 1px solid #252d3d !important;
-  border-radius: 6px !important; color: #e2e8f4 !important; font-size: .82rem !important;
-}
 
 /* ── Misc ── */
 hr { border-color: #1e2535 !important; }
