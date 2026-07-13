@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1009,7 +1010,7 @@ def render_table(rows: list[dict], key: str,
 })();
 </script>
 """.replace("__TABLE_ID__", json.dumps(table_id))
-    st.html(script, unsafe_allow_javascript=True)
+    components.html(script, height=0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Rendu d'un onglet
@@ -1272,7 +1273,7 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.html("""
+components.html("""
 <script>
 (function () {
   const parentWindow = window.parent;
@@ -1328,7 +1329,7 @@ st.html("""
   }
 })();
 </script>
-""", unsafe_allow_javascript=True)
+""", height=0)
 
 # ── Alertes doublons ──────────────────────────────────────────────────────────
 dupes = st.session_state.get("ticker_dupes", [])
