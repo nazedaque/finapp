@@ -1,3 +1,11 @@
-streamlit==1.50.0
-pandas==2.3.3
-yfinance==0.2.66
+streamlit==1.58.0
+pandas==3.0.3
+yfinance==1.5.1
+anyio==4.14.1
+cffi==2.0.0
+charset-normalizer==3.4.7
+GitPython==3.1.50
+peewee==4.1.1
+pyarrow==24.0.0
+uvicorn==0.50.0
+websockets==16.0
