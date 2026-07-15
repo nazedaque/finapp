@@ -84,22 +84,25 @@ access_guard()
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Mixte", "Zone", "Buy", "Fair", "Trim", "Exit", "Commentaires",
+    "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
+    "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
+    "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
-    "Score": "35px", "Mixte": "124px", "Zone": "74px",
+    "Score": "35px", "Mixte": "124px",
     "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
 }
-CENTER = {"MAJ", "Pays", "Prix", "Var %", "Upside", "Score", "Mixte", "Zone",
+CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score", "Mixte",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 HEADER_CENTER = CENTER | {"Commentaires"}
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
+    "Audit": "number",
+    "JRS": "number",
     "Pays": "text",
     "Ticker": "text",
     "Société": "text",
@@ -108,7 +111,6 @@ SORTABLE_COLUMNS = {
     "Upside": "number",
     "Var %": "number",
     "Score": "number",
-    "Zone": "text",
     "Commentaires": "text",
 }
 
@@ -243,6 +245,9 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
             df["last_update"], dayfirst=True, errors="coerce").dt.date
     else:
         df["last_update"] = None
+    if "purchase_date" in df.columns:
+        df["purchase_date"] = pd.to_datetime(
+            df["purchase_date"], dayfirst=True, errors="coerce").dt.date
 
     # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
     # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
@@ -597,23 +602,26 @@ def fmt_verif(v) -> str:
     return value
 
 
-def html_audit(v) -> str:
+def html_audit(v, underwritten: bool) -> tuple[str, int]:
     value = fmt_verif(v)
-    if not value:
-        return '<span style="color:#4a5980">—</span>'
-    normalized = _normalize_col(value).upper()
-    if "PASS" in normalized and "RESERVE" in normalized:
-        symbol, color = "!", "#f59e0b"
-    elif "PASS" in normalized:
-        symbol, color = "✓", "#22c55e"
-    elif any(word in normalized for word in ("ECHEC", "FAIL", "REFUS", "REJET")):
-        symbol, color = "×", "#ef4444"
+    normalized = _normalize_col(value)
+    audited = normalized in {
+        "pass", "pass avec reserves", "correction materielle", "corrige apres audit",
+    }
+    if audited:
+        color, label, rank = "#22c55e", "Underwrité et audité", 2
+        if value:
+            label += f" — {value}"
+    elif underwritten:
+        color, label, rank = "#facc15", "Underwrité mais non audité", 1
     else:
-        symbol, color = "•", "#94a3b8"
-    return (
-        f'<span title="{html.escape(value, quote=True)}" '
-        f'style="color:{color};font-weight:800">{symbol}</span>'
+        color, label, rank = "#f97316", "Screené uniquement", 0
+    light = (
+        f'<span class="audit-light" title="{html.escape(label, quote=True)}" '
+        f'role="img" aria-label="{html.escape(label, quote=True)}" '
+        f'style="color:{color};background:{color}"></span>'
     )
+    return light, rank
 
 
 def html_zone(v) -> str:
@@ -673,7 +681,7 @@ def fmt_holding_days(v, required: bool = False) -> str:
     if days is None:
         return "N/A" if required else "—"
     if 150 <= days <= 180:
-        return f'<span style="color:#f97316">{days}</span>'
+        return f'<span style="color:#ef4444;font-weight:700">{days}</span>'
     return str(days)
 
 def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
@@ -749,9 +757,12 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score_mixte = score_sheet if score_sheet is not None else score
         upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
-        zone = compute_zone(price, buy, fair, trim, exit_) or (
-            "" if pd.isna(r.get("zone")) else str(r.get("zone")).strip()
+        prompt_version = (
+            "" if pd.isna(r.get("prompt_version")) else str(r.get("prompt_version")).strip()
         )
+        underwritten = bool(prompt_version) or sum(value is not None for value in target_values) >= 3
+        audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
+        days = holding_days(r.get("purchase_date"))
         comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
 
         gf = str(r["gf_ticker"])
@@ -770,6 +781,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_flagged":      flagged,
             "_sort": {
                 "MAJ": r.get("last_update").toordinal() if isinstance(r.get("last_update"), date) else None,
+                "Audit": audit_rank,
+                "JRS": days,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
                 "Société": name_u,
@@ -778,10 +791,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Upside": upside,
                 "Var %": chg,
                 "Score": score,
-                "Zone": zone,
                 "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
+            "Audit":    audit_html,
+            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{html.escape(name_u, quote=True)}">{html.escape(name_html)}</span>',
@@ -791,7 +805,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
             "Mixte":    html_score_mixte(score_mixte),
-            "Zone":     html_zone(zone),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
@@ -903,6 +916,14 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   width: 15px;
   line-height: 10px;
   border-radius: 2px;
+  vertical-align: middle;
+}
+.audit-light {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 7px currentColor;
   vertical-align: middle;
 }
 .score-spark {
