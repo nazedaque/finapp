@@ -91,7 +91,7 @@ COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
     "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
-    "Score": "84px",
+    "Score": "62px",
     "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
 }
 CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
@@ -597,21 +597,34 @@ def html_audit(v, underwritten: bool) -> tuple[str, int]:
     return light, rank
 
 
-def html_score_bar(v) -> str:
+def score_sheet_color(score: float) -> str:
+    """Reproduit l'échelle de couleurs du Sheet : rouge, jaune, vert."""
+    low = (244, 204, 204)
+    middle = (255, 239, 178)
+    high = (198, 229, 198)
+    if score <= 50:
+        start, end, ratio = low, middle, score / 50
+    else:
+        start, end, ratio = middle, high, (score - 50) / 50
+    rgb = tuple(round(a + (b - a) * ratio) for a, b in zip(start, end))
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def html_score_cell(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     try:
         score = max(0.0, min(100.0, float(v)))
     except Exception:
         return "—"
-    hidden = 100.0 - score
+    color = score_sheet_color(score)
     return (
-        '<div class="score-bar" title="Score global du Sheet : {:.0f}/100" '
+        '<div class="score-cell" style="background:{}" '
+        'title="Score global du Sheet : {:.0f}/100" '
         'role="img" aria-label="Score global {:.0f} sur 100">'
-        '<div class="score-bar-fill" style="clip-path:inset(0 {:.2f}% 0 0)"></div>'
         '<span>{:.0f}</span>'
         '</div>'
-    ).format(score, score, hidden, score)
+    ).format(color, score, score, score)
 
 def holding_days(v) -> int | None:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
@@ -745,7 +758,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
-            "Score":    html_score_bar(score),
+            "Score":    html_score_cell(score),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
@@ -840,6 +853,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-variant-numeric: tabular-nums;
 }
 .wl-table td.c { text-align: center; }
+.wl-table td.score-col { padding: 0 !important; }
 .wl-table a,
 .wl-table a:hover,
 .wl-table a:focus,
@@ -867,35 +881,16 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   box-shadow: 0 0 7px currentColor;
   vertical-align: middle;
 }
-.score-bar {
-  position: relative;
-  height: 18px;
+.score-cell {
+  height: 29px;
   width: 100%;
-  margin: 0 auto;
-  background: #252d3d;
-  display: block;
-  border: 1px solid rgba(148,163,184,.22);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.score-bar-fill {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, #f4cccc 0%, #ffefb2 50%, #c6e5c6 100%);
-  border-radius: inherit;
-}
-.score-bar span {
-  position: relative;
-  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  color: #f8fafc;
-  font-size: .68rem;
+  color: #111827;
+  font-size: .74rem;
   font-weight: 800;
   line-height: 1;
-  text-shadow: 0 1px 2px rgba(0,0,0,.95);
 }
 </style>"""
 
@@ -951,6 +946,7 @@ def render_table(rows: list[dict], key: str,
             classes = " ".join(filter(None, (
                 "c" if column in CENTER else "",
                 "group-start" if column in GROUP_STARTS else "",
+                "score-col" if column == "Score" else "",
             )))
             sort_value = _sort_attr(row.get("_sort", {}).get(column))
             td_parts.append(
