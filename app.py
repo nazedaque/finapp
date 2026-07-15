@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import html
-import io
+import hmac
 import re
 import time
 import unicodedata
@@ -11,9 +11,6 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
-from pathlib import Path
-
-
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -23,44 +20,87 @@ import yfinance as yf
 # Config
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.set_page_config(page_title="Watchlist", page_icon=None, layout="wide",
+st.set_page_config(page_title="Finapp SOL", page_icon=None, layout="wide",
                    initial_sidebar_state="collapsed")
 
-SHEET_ID      = "1KQ0eolfB-UH-N-jQo2WDxsmVNT3I4IhiTEbdIfcPvbA"
-SHEET_NAME    = "Travail"
-SHEET_CSV_URL = (f"https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-                 f"/export?format=csv&sheet={SHEET_NAME}")
-CSV_FALLBACK      = "tickers.csv"
+APP_TITLE         = "Finapp SOL"
+SHEET_ID          = "1P6f-aDWgS6a9qstyazQlITGv6NBraU9yG3uN1Fu8R1o"
+SHEET_NAME        = "Registre"
 REFRESH_TTL       = 15 * 60
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
 HTTP_RETRIES      = 3
 
+
+def _secret(path: tuple[str, ...], default=None):
+    try:
+        value = st.secrets
+        for key in path:
+            value = value[key]
+        return value
+    except (FileNotFoundError, KeyError, TypeError):
+        return default
+
+
+def access_guard() -> None:
+    """Bloque tout chargement du Sheet avant validation du code privé."""
+    expected = str(_secret(("app", "access_code"), "")).strip()
+    invalid = not expected or expected.lower().startswith("replace") or len(expected) < 12
+
+    if invalid:
+        st.title(APP_TITLE)
+        st.info("L'application privée n'est pas encore configurée.")
+        st.caption(
+            "Ajoutez un code d'accès d'au moins 12 caractères et la connexion Google "
+            "dans les secrets Streamlit. Aucune donnée n'est chargée dans cet état."
+        )
+        st.stop()
+
+    if st.session_state.get("access_granted"):
+        return
+
+    st.title(APP_TITLE)
+    st.caption("Accès privé — le Sheet n'est chargé qu'après authentification.")
+    with st.form("access_form", clear_on_submit=True):
+        candidate = st.text_input(
+            "Code d'accès", type="password", autocomplete="current-password"
+        )
+        submitted = st.form_submit_button(
+            "Ouvrir finapp", type="primary", use_container_width=True
+        )
+    if submitted:
+        if hmac.compare_digest(candidate.encode(), expected.encode()):
+            st.session_state["access_granted"] = True
+            st.rerun()
+        st.error("Code incorrect.")
+    st.stop()
+
+
+access_guard()
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Colonnes & layout — identiques entre onglets
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "V", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires", "↗",
+    "MAJ", "Audit", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "Score", "Zone", "Buy", "Fair", "Trim", "Exit", "Conf.", "Action", "Commentaires",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "V": "41px", "JRS": "36px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
+    "MAJ": "46px", "Audit": "48px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
-    "Score": "35px", "Mixte": "124px", "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
-    "Commentaires": "177px",
-    "↗": "29px",
+    "Score": "35px", "Zone": "74px", "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
+    "Conf.": "72px", "Action": "115px", "Commentaires": "177px",
 }
-CENTER = {"MAJ", "V", "Pays", "JRS", "Prix", "Var %", "Upside", "Score", "Mixte",
-          "Buy", "Fair", "Trim", "Exit", "Qual", "↗"}
+CENTER = {"MAJ", "Audit", "Pays", "Prix", "Var %", "Upside", "Score", "Zone",
+          "Buy", "Fair", "Trim", "Exit", "Qual", "Conf."}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 HEADER_CENTER = CENTER | {"Commentaires"}
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
-    "V": "auto",
-    "JRS": "number",
+    "Audit": "text",
     "Pays": "text",
     "Ticker": "text",
     "Société": "text",
@@ -69,6 +109,9 @@ SORTABLE_COLUMNS = {
     "Upside": "number",
     "Var %": "number",
     "Score": "number",
+    "Zone": "text",
+    "Conf.": "text",
+    "Action": "text",
     "Commentaires": "text",
 }
 
@@ -78,7 +121,8 @@ SORTABLE_COLUMNS = {
 
 def parse_num(v) -> float | None:
     if v is None: return None
-    s = str(v).strip().replace("\u202f", "").replace("\xa0", "").replace(" ", "")
+    s = (str(v).strip().replace("\u202f", "").replace("\xa0", "")
+         .replace(" ", "").replace("%", ""))
     if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""): return None
     if re.match(r"^\d{1,3}(,\d{3})+$", s): return float(s.replace(",", ""))
     if re.match(r"^\d{1,3}(,\d{3})+,\d{1,2}$", s):
@@ -95,6 +139,7 @@ def parse_num(v) -> float | None:
 
 SHEET_COL_NORMALIZED = {
     "ticker":      "gf_ticker",
+    "entreprise":  "name",
     "societe":     "name",
     "portif":      "portif",
     "date d'achat": "purchase_date",
@@ -102,6 +147,7 @@ SHEET_COL_NORMALIZED = {
     "verif":       "verif",
     "v":           "verif",
     "note":        "note",
+    "qualite /100": "note",
     "buy":         "buy",
     "fair":        "fair",
     "trim":        "trim",
@@ -111,12 +157,28 @@ SHEET_COL_NORMALIZED = {
     "commentaires": "comments",
     "comments":    "comments",
     "spot":        "spot_sheet",
+    "cours":       "spot_sheet",
+    "devise":      "currency",
     "score mixte": "score_sheet",
+    "score global /100": "score_sheet",
+    "zone actuelle": "zone",
+    "upside fair": "upside_fair_sheet",
+    "upside trim": "upside_trim_sheet",
+    "confiance": "confidence",
+    "sensibilite normalisation": "normalization_sensitivity",
+    "date analyse": "last_update",
+    "date comptes": "accounts_date",
+    "version prompt": "prompt_version",
+    "audit": "verif",
+    "action suivante": "next_action",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
     "yf_ticker":   "yf_ticker",
 }
-NUMERIC_COLS = ["note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet"]
+NUMERIC_COLS = [
+    "note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet",
+    "upside_fair_sheet", "upside_trim_sheet",
+]
 
 
 def _normalize_col(s: str) -> str:
@@ -127,49 +189,23 @@ def _normalize_col(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def _read_remote_csv(url: str) -> pd.DataFrame:
-    """Télécharge le CSV une seule fois, avec timeout et reprises transitoires."""
-    last_error: Exception | None = None
-    raw = b""
-    for attempt in range(HTTP_RETRIES):
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(request, timeout=15) as response:
-                raw = response.read()
-            break
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-            last_error = exc
-            retryable = not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
-            if not retryable or attempt + 1 >= HTTP_RETRIES:
-                raise
-            time.sleep(0.4 * (2 ** attempt))
+def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
+    """Lit l'onglet Registre via la connexion Google privée de Streamlit."""
+    from streamlit_gsheets import GSheetsConnection
 
-    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
-        try:
-            df = pd.read_csv(io.BytesIO(raw), encoding=encoding, header=0, dtype=str)
-            if not df.empty:
-                return df
-        except (UnicodeDecodeError, pd.errors.ParserError) as exc:
-            last_error = exc
-    raise RuntimeError(f"CSV Google Sheet illisible : {last_error}")
+    connection = st.connection("gsheets", type=GSheetsConnection)
+    return connection.read(worksheet=SHEET_NAME, ttl=ttl)
 
 
-def load_tickers() -> tuple[pd.DataFrame, str]:
-    """Charge et normalise le Google Sheet, avec CSV local en secours."""
-    url = SHEET_CSV_URL + f"&_cb={time.time_ns()}"
-    source = "Google Sheet"
+def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
+    """Charge et normalise SOL input sans rendre le Sheet public."""
     try:
-        df = _read_remote_csv(url)
-    except Exception as remote_error:
-        fallback_path = Path(__file__).with_name(CSV_FALLBACK)
-        try:
-            df = pd.read_csv(fallback_path, encoding="utf-8-sig", header=0, dtype=str)
-            source = "tickers.csv (fallback)"
-        except Exception as fallback_error:
-            raise RuntimeError(
-                f"Impossible de charger le Google Sheet ({remote_error}) "
-                f"ni le CSV local ({fallback_error})."
-            ) from fallback_error
+        df = _read_private_sheet(ttl=0 if force_refresh else "5m")
+    except Exception as exc:
+        raise RuntimeError(
+            "Impossible de lire SOL input / Registre avec la connexion Google privée. "
+            "Vérifiez les secrets Streamlit et le partage en lecture avec le compte de service."
+        ) from exc
 
     # Renommage robuste avec normalisation agressive
     rename_map: dict[str, str] = {}
@@ -177,33 +213,14 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
         norm = _normalize_col(col)
         if norm in SHEET_COL_NORMALIZED:
             rename_map[col] = SHEET_COL_NORMALIZED[norm]
-    comments_col_m = df.iloc[:, 12].copy() if len(df.columns) > 12 else None
-
     df = df.rename(columns=rename_map)
 
     # Colonnes manquantes → NA
     for col in SHEET_COL_NORMALIZED.values():
         if col not in df.columns:
             df[col] = pd.NA
-    if comments_col_m is not None:
-        df["comments"] = comments_col_m.fillna("")
-
-    # Le nouveau sheet utilise yf_ticker comme ticker principal.
-    if df["gf_ticker"].isna().all() and "yf_ticker" in df.columns:
-        df["gf_ticker"] = df["yf_ticker"]
-
-    # Si gf_ticker est toujours vide, essai positionnel (col C = index 2)
-    if df["gf_ticker"].isna().all() and len(df.columns) > 2:
-        candidate = df.iloc[:, 2].dropna().astype(str)
-        # Vérifier que ça ressemble à des tickers (pas de valeurs numériques pures)
-        looks_like_tickers = candidate.str.upper().str.match(r"^[A-Z0-9:\.\-]+$").sum() > len(candidate) * 0.5
-        if looks_like_tickers:
-            df["gf_ticker"] = df.iloc[:, 2]
-
     df["verif_display"] = df["verif"].apply(fmt_verif)
-    df["flagged"] = df.iloc[:, 0].apply(
-        lambda v: str(v).strip().upper() in ("TRUE", "1", "VRAI")
-    )
+    df["flagged"] = False
 
     # Nettoyage
     df = df[df["gf_ticker"].notna()].copy()
@@ -247,7 +264,7 @@ def load_tickers() -> tuple[pd.DataFrame, str]:
     dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
     st.session_state["ticker_dupes"] = dupes.to_dict("records") if not dupes.empty else []
 
-    return df.reset_index(drop=True), source
+    return df.reset_index(drop=True), "SOL input / Registre (privé)"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Métadonnées (noms) — parallèle, cache 7j
@@ -491,6 +508,23 @@ def compute_upside(price, fair, trim) -> float | None:
         return (target - float(price)) / float(price) * 100
     except Exception: return None
 
+
+def compute_zone(price, buy, fair, trim, exit_) -> str | None:
+    """Recalcule la zone SOL à partir du cours temps réel."""
+    try:
+        p, b, f, t, e = map(float, (price, buy, fair, trim, exit_))
+        if not b <= f <= t <= e:
+            return None
+        if p <= b:
+            return "Buy"
+        if p <= f:
+            return "Fair"
+        if p <= t:
+            return "Trim"
+        return "Exit"
+    except Exception:
+        return None
+
 def safe_float(v) -> float | None:
     if v is None:
         return None
@@ -564,6 +598,53 @@ def fmt_verif(v) -> str:
     if re.fullmatch(r"[+-]?[0-9]+,[0-9]+", value):
         return value.replace(",", ".")
     return value
+
+
+def html_audit(v) -> str:
+    value = fmt_verif(v)
+    if not value:
+        return '<span style="color:#4a5980">—</span>'
+    normalized = _normalize_col(value).upper()
+    if "PASS" in normalized and "RESERVE" in normalized:
+        symbol, color = "!", "#f59e0b"
+    elif "PASS" in normalized:
+        symbol, color = "✓", "#22c55e"
+    elif any(word in normalized for word in ("ECHEC", "FAIL", "REFUS", "REJET")):
+        symbol, color = "×", "#ef4444"
+    else:
+        symbol, color = "•", "#94a3b8"
+    return (
+        f'<span title="{html.escape(value, quote=True)}" '
+        f'style="color:{color};font-weight:800">{symbol}</span>'
+    )
+
+
+def html_zone(v) -> str:
+    value = "" if v is None or pd.isna(v) else str(v).strip()
+    if not value:
+        return "—"
+    palette = {
+        "buy": ("#052e16", "#4ade80"),
+        "fair": ("#172554", "#93c5fd"),
+        "trim": ("#451a03", "#fbbf24"),
+        "exit": ("#450a0a", "#fca5a5"),
+    }
+    key = _normalize_col(value)
+    background, color = palette.get(key, ("#1e293b", "#cbd5e1"))
+    return (
+        f'<span style="display:inline-block;padding:2px 7px;border-radius:999px;'
+        f'background:{background};color:{color};font-size:.68rem;font-weight:700">'
+        f'{html.escape(value)}</span>'
+    )
+
+
+def html_confidence(v) -> str:
+    value = "" if v is None or pd.isna(v) else str(v).strip()
+    if not value:
+        return "—"
+    normalized = _normalize_col(value)
+    label = "Haute" if "haut" in normalized else "Moy." if "moy" in normalized else "Faible" if "faibl" in normalized else value
+    return f'<span title="{html.escape(value, quote=True)}">{html.escape(label)}</span>'
 
 def html_score_mixte(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -668,11 +749,15 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score_sheet = safe_float(r.get("score_sheet"))
         if score is None:
             score = score_sheet
-        score_mixte = score_sheet if score_sheet is not None else score
         upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
+        zone = compute_zone(price, buy, fair, trim, exit_) or (
+            "" if pd.isna(r.get("zone")) else str(r.get("zone")).strip()
+        )
+        audit = "" if pd.isna(r.get("verif")) else str(r.get("verif")).strip()
+        confidence = "" if pd.isna(r.get("confidence")) else str(r.get("confidence")).strip()
+        action = "" if pd.isna(r.get("next_action")) else str(r.get("next_action")).strip()
         comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
-        days = holding_days(r.get("purchase_date"))
 
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
@@ -690,8 +775,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_flagged":      flagged,
             "_sort": {
                 "MAJ": r.get("last_update").toordinal() if isinstance(r.get("last_update"), date) else None,
-                "V": r.get("verif_display", ""),
-                "JRS": days,
+                "Audit": audit,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
                 "Société": name_u,
@@ -700,11 +784,13 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Upside": upside,
                 "Var %": chg,
                 "Score": score,
+                "Zone": zone,
+                "Conf.": confidence,
+                "Action": action,
                 "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
-            "V":        html.escape(str(r.get("verif_display", ""))),
-            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
+            "Audit":    html_audit(audit),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{html.escape(name_u, quote=True)}">{html.escape(name_html)}</span>',
@@ -713,13 +799,14 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
-            "Mixte":    html_score_mixte(score_mixte),
+            "Zone":     html_zone(zone),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
+            "Conf.":    html_confidence(confidence),
+            "Action":   html.escape(action),
             "Commentaires": html.escape(comments),
-            "↗":        html_link(r.get("url")),
         })
     return rows
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1052,25 +1139,11 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_debug(tickers_df: pd.DataFrame, prices: dict) -> None:
-    st.subheader("Diagnostic colonnes")
-    st.write(f"**{len(tickers_df)} titres chargés.** Colonnes internes :")
+    st.subheader("Diagnostic privé")
+    st.write(f"**{len(tickers_df)} titres chargés depuis SOL input / Registre.**")
+    st.caption("Cet écran n'affiche pas l'aperçu brut du Sheet ni les secrets de connexion.")
+    st.write("Colonnes internes :")
     st.code(str(list(tickers_df.columns)))
-
-    # Le CSV brut n'est téléchargé que sur demande, pas à chaque rerun Streamlit.
-    if st.button("Charger l'aperçu brut du CSV", key="debug_raw_csv"):
-        try:
-            df_raw = _read_remote_csv(SHEET_CSV_URL).head(2)
-        except Exception:
-            fallback_path = Path(__file__).with_name(CSV_FALLBACK)
-            try:
-                df_raw = pd.read_csv(fallback_path, encoding="utf-8-sig", header=0,
-                                     dtype=str, nrows=2)
-            except Exception as exc:
-                st.error(str(exc))
-                df_raw = None
-        if df_raw is not None:
-            st.code(str(list(df_raw.columns)))
-            st.dataframe(df_raw, width="stretch")
 
     if tickers_df.empty:
         st.error("DataFrame vide — impossible d'afficher les diagnostics.")
@@ -1121,7 +1194,7 @@ if cached_tickers_df is not None and not force_sheet_refresh:
 else:
     with st.spinner("Chargement du Google Sheet…"):
         try:
-            tickers_df, data_source = load_tickers()
+            tickers_df, data_source = load_tickers(force_refresh=force_sheet_refresh)
             st.session_state["tickers_df"] = tickers_df.copy(deep=True)
             st.session_state["data_source"] = data_source
         except Exception as exc:
@@ -1132,13 +1205,7 @@ else:
             tickers_df = cached_tickers_df.copy(deep=True)
             data_source = st.session_state.get("data_source", "Cache de session")
 if tickers_df.empty:
-    st.error("Le DataFrame est vide après chargement. Voici les colonnes brutes du sheet :")
-    try:
-        df_raw = pd.read_csv(SHEET_CSV_URL, encoding="utf-8", header=0, dtype=str, nrows=3)
-    except Exception:
-        df_raw = pd.read_csv(CSV_FALLBACK, header=0, dtype=str, nrows=3)
-    st.code(str(list(df_raw.columns)))
-    st.dataframe(df_raw, width="stretch")
+    st.error("L'onglet Registre ne contient aucun titre exploitable.")
     st.stop()
 
 ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI", ".HK")
@@ -1273,6 +1340,12 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown(
+    '<div style="margin:-2px 0 10px;color:#64748b;font-size:.76rem">'
+    'FINAPP SOL&nbsp;&nbsp;•&nbsp;&nbsp;Registre privé en lecture seule</div>',
+    unsafe_allow_html=True,
+)
+
 components.html("""
 <script>
 (function () {
@@ -1354,7 +1427,7 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
       <div class="wl-stat-val">{pf_count}</div>
     </div>
     <div class="wl-stat">
-      <div class="wl-stat-label">Watchlist</div>
+      <div class="wl-stat-label">Hors portefeuille</div>
       <div class="wl-stat-val">{wl_count}</div>
     </div>
     <div class="wl-stat">
@@ -1377,7 +1450,7 @@ def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
     return tuple(dict.fromkeys(t for t in normalized if t))
 
 def table_cols_with_holding_days() -> list[str]:
-    """Colonnes principales, avec JRS placé entre V et Pays."""
+    """Colonnes synthétiques adaptées au Registre SOL."""
     return DISPLAY_COLS
 
 pf_yf = tickers_for(pf_df)
@@ -1463,9 +1536,9 @@ rows_asia = build_rows(asia_df, prices, names, False)
 
 tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
-    f"Watchlist ({len(wl_df)})",
-    f"Asia ({len(asia_df)})",
-    "Debug",
+    f"Analysés ({len(wl_df)})",
+    f"Asie ({len(asia_df)})",
+    "Diagnostic",
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
