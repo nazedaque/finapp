@@ -134,7 +134,9 @@ def parse_num(v) -> float | None:
     if re.match(r"^\d{1,3}(,\d{3})+,\d{1,2}$", s):
         parts = s.split(","); return float("".join(parts[:-1]) + "." + parts[-1])
     if "," in s: return float(s.replace(".", "").replace(",", "."))
-    if re.match(r"^\d{1,3}(\.\d{3})+$", s): return float(s.replace(".", ""))
+    # L'API Google renvoie les décimales avec un point, même pour un Sheet FR.
+    # Un point unique reste donc décimal ; 1.234.567 reste un entier groupé.
+    if re.match(r"^\d{1,3}(\.\d{3}){2,}$", s): return float(s.replace(".", ""))
     try: return float(s)
     except ValueError: return None
 
