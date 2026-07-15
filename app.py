@@ -43,31 +43,191 @@ def _secret(path: tuple[str, ...], default=None):
         return default
 
 
+def _render_access_styles() -> None:
+    """Habillage dédié à l'écran privé, sans modifier le tableau de bord."""
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        [data-testid="stAppViewContainer"] {
+          background:
+            radial-gradient(circle at 18% 18%, rgba(37, 99, 235, .18), transparent 34%),
+            radial-gradient(circle at 82% 82%, rgba(14, 165, 233, .10), transparent 30%),
+            #090d15 !important;
+        }
+        [data-testid="stAppViewContainer"] > .main { background: transparent !important; }
+        [data-testid="stHeader"], [data-testid="stToolbar"],
+        [data-testid="stDecoration"], #MainMenu, footer { display: none !important; }
+        .block-container {
+          max-width: 440px !important;
+          padding: clamp(2.25rem, 10vh, 7rem) 1.25rem 2rem !important;
+        }
+        html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+
+        [data-testid="stForm"], .finapp-config-card {
+          background: rgba(17, 24, 39, .94);
+          border: 1px solid rgba(148, 163, 184, .16);
+          border-radius: 22px;
+          padding: 2.2rem 2.15rem 1.75rem;
+          box-shadow: 0 28px 70px rgba(0, 0, 0, .46), inset 0 1px 0 rgba(255, 255, 255, .035);
+          backdrop-filter: blur(16px);
+        }
+        .finapp-login-head { text-align: center; margin-bottom: 1.75rem; }
+        .finapp-monogram {
+          width: 54px;
+          height: 54px;
+          display: grid;
+          place-items: center;
+          margin: 0 auto 1rem;
+          border-radius: 16px;
+          color: #fff;
+          font-size: 1.45rem;
+          font-weight: 700;
+          letter-spacing: -.04em;
+          background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+          box-shadow: 0 12px 28px rgba(37, 99, 235, .34), inset 0 1px 0 rgba(255,255,255,.24);
+        }
+        .finapp-kicker {
+          color: #60a5fa;
+          font-size: .68rem;
+          font-weight: 700;
+          letter-spacing: .18em;
+          text-transform: uppercase;
+          margin-bottom: .45rem;
+        }
+        .finapp-login-head h1 {
+          color: #f8fafc;
+          font-size: 1.72rem;
+          line-height: 1.2;
+          letter-spacing: -.035em;
+          margin: 0 0 .55rem;
+        }
+        .finapp-login-head p {
+          color: #8f9bb0;
+          font-size: .86rem;
+          line-height: 1.55;
+          margin: 0;
+        }
+        [data-testid="stTextInput"] { margin-bottom: .45rem; }
+        [data-testid="stTextInput"] label p {
+          color: #cbd5e1 !important;
+          font-size: .76rem !important;
+          font-weight: 600 !important;
+        }
+        [data-testid="stTextInput"] input {
+          height: 46px;
+          color: #f8fafc !important;
+          background: #0b1220 !important;
+          border: 1px solid #263247 !important;
+          border-radius: 10px !important;
+          box-shadow: none !important;
+        }
+        [data-testid="stTextInput"] input:focus {
+          border-color: #3b82f6 !important;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, .14) !important;
+        }
+        [data-testid="stFormSubmitButton"] button {
+          min-height: 46px;
+          margin-top: .35rem;
+          color: #fff !important;
+          font-size: .82rem !important;
+          font-weight: 650 !important;
+          border: 0 !important;
+          border-radius: 10px !important;
+          background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+          box-shadow: 0 10px 22px rgba(37, 99, 235, .26) !important;
+          transition: transform .16s ease, box-shadow .16s ease !important;
+        }
+        [data-testid="stFormSubmitButton"] button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 13px 28px rgba(37, 99, 235, .34) !important;
+        }
+        .finapp-login-note {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: .45rem;
+          color: #64748b;
+          font-size: .68rem;
+          margin-top: 1.1rem;
+        }
+        .finapp-login-note::before {
+          content: '';
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #22c55e;
+          box-shadow: 0 0 0 3px rgba(34, 197, 94, .11);
+        }
+        [data-testid="stAlert"] {
+          border-radius: 10px !important;
+          font-size: .76rem !important;
+        }
+        @media (max-width: 520px) {
+          .block-container { padding-top: 2.25rem !important; }
+          [data-testid="stForm"], .finapp-config-card { padding: 1.8rem 1.35rem 1.4rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _access_brand() -> None:
+    st.markdown(
+        """
+        <div class="finapp-login-head">
+          <div class="finapp-monogram">F</div>
+          <div class="finapp-kicker">Finapp · SOL</div>
+          <h1>Votre tableau de bord</h1>
+          <p>Une vue claire et privée de votre portefeuille.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def access_guard() -> None:
     """Bloque tout chargement du Sheet avant validation du code privé."""
     expected = str(_secret(("app", "access_code"), "")).strip()
     invalid = not expected or expected.lower().startswith("replace") or len(expected) < 4
 
     if invalid:
-        st.title(APP_TITLE)
-        st.info("L'application privée n'est pas encore configurée.")
-        st.caption(
-            "Ajoutez un code d'accès d'au moins 4 caractères et la connexion Google "
-            "dans les secrets Streamlit. Aucune donnée n'est chargée dans cet état."
+        _render_access_styles()
+        st.markdown(
+            """
+            <div class="finapp-config-card">
+              <div class="finapp-login-head">
+                <div class="finapp-monogram">F</div>
+                <div class="finapp-kicker">Finapp · SOL</div>
+                <h1>Configuration requise</h1>
+                <p>Ajoutez le code d'accès et la connexion Google dans les secrets Streamlit.</p>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
         st.stop()
 
     if st.session_state.get("access_granted"):
         return
 
-    st.title(APP_TITLE)
-    st.caption("Accès privé — le Sheet n'est chargé qu'après authentification.")
+    _render_access_styles()
     with st.form("access_form", clear_on_submit=True):
+        _access_brand()
         candidate = st.text_input(
-            "Code d'accès", type="password", autocomplete="current-password"
+            "Code d'accès",
+            type="password",
+            autocomplete="current-password",
+            placeholder="Saisissez votre code",
         )
         submitted = st.form_submit_button(
-            "Ouvrir finapp", type="primary", use_container_width=True
+            "Accéder à Finapp", type="primary", use_container_width=True
+        )
+        st.markdown(
+            '<div class="finapp-login-note">Connexion privée et sécurisée</div>',
+            unsafe_allow_html=True,
         )
     if submitted:
         if hmac.compare_digest(candidate.encode(), expected.encode()):
