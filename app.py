@@ -46,13 +46,13 @@ def _secret(path: tuple[str, ...], default=None):
 def access_guard() -> None:
     """Bloque tout chargement du Sheet avant validation du code privé."""
     expected = str(_secret(("app", "access_code"), "")).strip()
-    invalid = not expected or expected.lower().startswith("replace") or len(expected) < 12
+    invalid = not expected or expected.lower().startswith("replace") or len(expected) < 4
 
     if invalid:
         st.title(APP_TITLE)
         st.info("L'application privée n'est pas encore configurée.")
         st.caption(
-            "Ajoutez un code d'accès d'au moins 12 caractères et la connexion Google "
+            "Ajoutez un code d'accès d'au moins 4 caractères et la connexion Google "
             "dans les secrets Streamlit. Aucune donnée n'est chargée dans cet état."
         )
         st.stop()

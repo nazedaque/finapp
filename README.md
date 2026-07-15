@@ -14,7 +14,7 @@ Vue Streamlit privée et en lecture seule de l'onglet `Registre` du Sheet `SOL i
 1. Copier la structure de `.streamlit/secrets.toml.example` dans les secrets de l'application.
 2. Remplacer les valeurs d'exemple par celles du compte de service.
 3. Partager `SOL input` avec l'adresse `client_email` du compte de service en lecteur.
-4. Choisir un `access_code` d'au moins 12 caractères.
+4. Choisir un `access_code` d'au moins 4 caractères.
 
 Le fichier local `.streamlit/secrets.toml` est ignoré par Git.
 
