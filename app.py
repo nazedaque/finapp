@@ -89,7 +89,7 @@ DISPLAY_COLS = [
 ]
 COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
-    "Ticker": "59px", "Société": "145px", "Qual": "44px",
+    "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
     "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
@@ -189,12 +189,81 @@ def _normalize_col(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
-    """Lit l'onglet Registre via la connexion Google privée de Streamlit."""
+def _private_sheet_connection():
+    """Retourne la connexion Google privée configurée dans Streamlit."""
     from streamlit_gsheets import GSheetsConnection
 
-    connection = st.connection("gsheets", type=GSheetsConnection)
-    return connection.read(worksheet=SHEET_NAME, ttl=ttl)
+    return st.connection("gsheets", type=GSheetsConnection)
+
+
+def _column_letter(index: int) -> str:
+    letters = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
+
+
+def _effective_background_hex(cell: dict) -> str | None:
+    effective_format = cell.get("effectiveFormat", {})
+    rgb = effective_format.get("backgroundColorStyle", {}).get("rgbColor")
+    if not rgb:
+        rgb = effective_format.get("backgroundColor")
+    if not rgb:
+        return None
+    channels = tuple(round(float(rgb.get(name, 0)) * 255) for name in ("red", "green", "blue"))
+    return "#{:02x}{:02x}{:02x}".format(*channels)
+
+
+def _read_score_colors(connection, source_columns, row_count: int) -> list[str | None]:
+    """Lit la couleur effective de chaque cellule Score directement dans le Sheet."""
+    score_column = next(
+        (
+            index
+            for index, column in enumerate(source_columns, start=1)
+            if SHEET_COL_NORMALIZED.get(_normalize_col(column)) == "score_sheet"
+        ),
+        None,
+    )
+    if score_column is None or row_count <= 0:
+        return [None] * row_count
+
+    raw_client = getattr(connection.client, "_client", None)
+    if raw_client is None:
+        raise RuntimeError("La connexion Google n'expose pas les formats de cellules.")
+
+    column = _column_letter(score_column)
+    spreadsheet = raw_client.open_by_key(SHEET_ID)
+    metadata = spreadsheet.fetch_sheet_metadata(params={
+        "includeGridData": True,
+        "ranges": [f"'{SHEET_NAME}'!{column}2:{column}{row_count + 1}"],
+    })
+    sheet = next(
+        item for item in metadata.get("sheets", [])
+        if item.get("properties", {}).get("title") == SHEET_NAME
+    )
+    data = sheet.get("data", [])
+    row_data = data[0].get("rowData", []) if data else []
+    colors: list[str | None] = []
+    for index in range(row_count):
+        values = row_data[index].get("values", []) if index < len(row_data) else []
+        colors.append(_effective_background_hex(values[0]) if values else None)
+    return colors
+
+
+def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
+    """Lit les valeurs et couleurs effectives de Registre via Google."""
+    connection = _private_sheet_connection()
+    df = connection.read(worksheet=SHEET_NAME, ttl=ttl)
+    try:
+        df["_score_sheet_color"] = _read_score_colors(connection, df.columns, len(df))
+        st.session_state.pop("score_color_warning", None)
+    except Exception:
+        df["_score_sheet_color"] = None
+        st.session_state["score_color_warning"] = (
+            "Les couleurs du Score n'ont pas pu être relues dans le Google Sheet."
+        )
+    return df
 
 
 def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
@@ -597,27 +666,16 @@ def html_audit(v, underwritten: bool) -> tuple[str, int]:
     return light, rank
 
 
-def score_sheet_color(score: float) -> str:
-    """Reproduit l'échelle de couleurs du Sheet : rouge, jaune, vert."""
-    low = (244, 204, 204)
-    middle = (255, 239, 178)
-    high = (198, 229, 198)
-    if score <= 50:
-        start, end, ratio = low, middle, score / 50
-    else:
-        start, end, ratio = middle, high, (score - 50) / 50
-    rgb = tuple(round(a + (b - a) * ratio) for a, b in zip(start, end))
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-def html_score_cell(v) -> str:
+def html_score_cell(v, sheet_color) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     try:
         score = max(0.0, min(100.0, float(v)))
     except Exception:
         return "—"
-    color = score_sheet_color(score)
+    color = str(sheet_color) if isinstance(sheet_color, str) and re.fullmatch(
+        r"#[0-9a-fA-F]{6}", sheet_color
+    ) else "#e5e7eb"
     return (
         '<div class="score-cell" style="background:{}" '
         'title="Score global du Sheet : {:.0f}/100" '
@@ -758,7 +816,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
-            "Score":    html_score_cell(score),
+            "Score":    html_score_cell(score, r.get("_score_sheet_color")),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
@@ -844,7 +902,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   letter-spacing: .03em;
 }
 .wl-table td {
-  padding: 6px 8px;
+  padding: 3px 8px;
   border-bottom: 1px solid #1a2030;
   vertical-align: middle;
   overflow: hidden;
@@ -882,7 +940,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   vertical-align: middle;
 }
 .score-cell {
-  height: 29px;
+  height: 23px;
   width: 100%;
   display: flex;
   align-items: center;
@@ -1294,6 +1352,10 @@ dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
     tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
     st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
+
+score_color_warning = st.session_state.get("score_color_warning")
+if score_color_warning:
+    st.warning(score_color_warning)
 
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
