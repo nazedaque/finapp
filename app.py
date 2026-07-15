@@ -73,37 +73,15 @@ def _render_access_styles() -> None:
           box-shadow: 0 28px 70px rgba(0, 0, 0, .46), inset 0 1px 0 rgba(255, 255, 255, .035);
           backdrop-filter: blur(16px);
         }
-        .finapp-login-head { text-align: center; margin-bottom: 1.75rem; }
-        .finapp-monogram {
-          width: 54px;
-          height: 54px;
-          display: grid;
-          place-items: center;
-          margin: 0 auto 1rem;
-          border-radius: 16px;
-          color: #fff;
-          font-size: 1.45rem;
-          font-weight: 700;
-          letter-spacing: -.04em;
-          background: linear-gradient(145deg, #3b82f6, #1d4ed8);
-          box-shadow: 0 12px 28px rgba(37, 99, 235, .34), inset 0 1px 0 rgba(255,255,255,.24);
-        }
-        .finapp-kicker {
-          color: #60a5fa;
-          font-size: .68rem;
-          font-weight: 700;
-          letter-spacing: .18em;
-          text-transform: uppercase;
-          margin-bottom: .45rem;
-        }
-        .finapp-login-head h1 {
+        .finapp-config-card { text-align: center; }
+        .finapp-config-card h1 {
           color: #f8fafc;
-          font-size: 1.72rem;
+          font-size: 1.35rem;
           line-height: 1.2;
-          letter-spacing: -.035em;
+          letter-spacing: -.025em;
           margin: 0 0 .55rem;
         }
-        .finapp-login-head p {
+        .finapp-config-card p {
           color: #8f9bb0;
           font-size: .86rem;
           line-height: 1.55;
@@ -174,20 +152,6 @@ def _render_access_styles() -> None:
     )
 
 
-def _access_brand() -> None:
-    st.markdown(
-        """
-        <div class="finapp-login-head">
-          <div class="finapp-monogram">F</div>
-          <div class="finapp-kicker">Finapp · SOL</div>
-          <h1>Votre tableau de bord</h1>
-          <p>Une vue claire et privée de votre portefeuille.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def access_guard() -> None:
     """Bloque tout chargement du Sheet avant validation du code privé."""
     expected = str(_secret(("app", "access_code"), "")).strip()
@@ -198,12 +162,8 @@ def access_guard() -> None:
         st.markdown(
             """
             <div class="finapp-config-card">
-              <div class="finapp-login-head">
-                <div class="finapp-monogram">F</div>
-                <div class="finapp-kicker">Finapp · SOL</div>
-                <h1>Configuration requise</h1>
-                <p>Ajoutez le code d'accès et la connexion Google dans les secrets Streamlit.</p>
-              </div>
+              <h1>Configuration requise</h1>
+              <p>Ajoutez le code d'accès et la connexion Google dans les secrets Streamlit.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -215,7 +175,6 @@ def access_guard() -> None:
 
     _render_access_styles()
     with st.form("access_form", clear_on_submit=True):
-        _access_brand()
         candidate = st.text_input(
             "Code d'accès",
             type="password",
