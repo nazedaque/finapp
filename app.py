@@ -120,6 +120,13 @@ SORTABLE_COLUMNS = {
 
 def parse_num(v) -> float | None:
     if v is None: return None
+    # Les nombres déjà typés par pandas / st-gsheets ne doivent pas repasser
+    # par l'analyse des séparateurs : 80.624 est une décimale, pas 80 624.
+    if not isinstance(v, str):
+        try:
+            return None if pd.isna(v) else float(v)
+        except (TypeError, ValueError):
+            return None
     s = (str(v).strip().replace("\u202f", "").replace("\xa0", "")
          .replace(" ", "").replace("%", ""))
     if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""): return None
