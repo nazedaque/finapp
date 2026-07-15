@@ -902,7 +902,8 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   letter-spacing: .03em;
 }
 .wl-table td {
-  padding: 3px 8px;
+  height: 25px;
+  padding: 2px 8px;
   border-bottom: 1px solid #1a2030;
   vertical-align: middle;
   overflow: hidden;
@@ -912,6 +913,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 }
 .wl-table td.c { text-align: center; }
 .wl-table td.score-col { padding: 0 !important; }
+.wl-table tbody tr { height: 25px; }
 .wl-table a,
 .wl-table a:hover,
 .wl-table a:focus,
@@ -940,7 +942,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   vertical-align: middle;
 }
 .score-cell {
-  height: 23px;
+  height: 20px;
   width: 100%;
   display: flex;
   align-items: center;
