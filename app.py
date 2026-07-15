@@ -85,16 +85,16 @@ access_guard()
 
 DISPLAY_COLS = [
     "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Mixte", "Buy", "Fair", "Trim", "Exit", "Commentaires",
+    "Score", "Buy", "Fair", "Trim", "Exit", "Commentaires",
 ]
 COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
     "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
-    "Score": "35px", "Mixte": "124px",
+    "Score": "84px",
     "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
 }
-CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score", "Mixte",
+CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 HEADER_CENTER = CENTER | {"Commentaires"}
@@ -159,6 +159,7 @@ SHEET_COL_NORMALIZED = {
     "cours":       "spot_sheet",
     "devise":      "currency",
     "score mixte": "score_sheet",
+    "score global": "score_sheet",
     "score global /100": "score_sheet",
     "zone actuelle": "zone",
     "upside fair": "upside_fair_sheet",
@@ -495,17 +496,6 @@ def fetch_prices(yf_tickers: tuple[str, ...], refresh_nonce: int = 0) -> dict[st
 # Calculs métier
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_ratio(price, buy, exit_) -> float | None:
-    try:
-        p, b, e = float(price), float(buy), float(exit_)
-        if e <= b: return None
-        return max(0.0, min(1.0, (e - p) / (e - b)))
-    except Exception: return None
-
-def compute_score(ratio, note) -> float | None:
-    try: return (0.6 * float(ratio) + 0.4 * float(note) / 100) * 100
-    except Exception: return None
-
 def compute_upside(price, fair, trim) -> float | None:
     """Upside entre prix actuel et moyenne(Fair, Trim)."""
     try:
@@ -513,22 +503,6 @@ def compute_upside(price, fair, trim) -> float | None:
         return (target - float(price)) / float(price) * 100
     except Exception: return None
 
-
-def compute_zone(price, buy, fair, trim, exit_) -> str | None:
-    """Recalcule la zone SOL à partir du cours temps réel."""
-    try:
-        p, b, f, t, e = map(float, (price, buy, fair, trim, exit_))
-        if not b <= f <= t <= e:
-            return None
-        if p <= b:
-            return "Buy"
-        if p <= f:
-            return "Fair"
-        if p <= t:
-            return "Trim"
-        return "Exit"
-    except Exception:
-        return None
 
 def safe_float(v) -> float | None:
     if v is None:
@@ -561,10 +535,6 @@ def fmt_target(v, hide_decimals: bool = False) -> str:
 def fmt_note(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
     return str(int(float(v)))
-
-def fmt_score(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    return str(round(float(v)))
 
 def fmt_maj(maj_date) -> str:
     """
@@ -627,47 +597,21 @@ def html_audit(v, underwritten: bool) -> tuple[str, int]:
     return light, rank
 
 
-def html_zone(v) -> str:
-    value = "" if v is None or pd.isna(v) else str(v).strip()
-    if not value:
-        return "—"
-    palette = {
-        "buy": ("#052e16", "#4ade80"),
-        "fair": ("#172554", "#93c5fd"),
-        "trim": ("#451a03", "#fbbf24"),
-        "exit": ("#450a0a", "#fca5a5"),
-    }
-    key = _normalize_col(value)
-    background, color = palette.get(key, ("#1e293b", "#cbd5e1"))
-    return (
-        f'<span style="display:inline-block;padding:2px 7px;border-radius:999px;'
-        f'background:{background};color:{color};font-size:.68rem;font-weight:700">'
-        f'{html.escape(value)}</span>'
-    )
-
-
-def html_confidence(v) -> str:
-    value = "" if v is None or pd.isna(v) else str(v).strip()
-    if not value:
-        return "—"
-    normalized = _normalize_col(value)
-    label = "Haute" if "haut" in normalized else "Moy." if "moy" in normalized else "Faible" if "faibl" in normalized else value
-    return f'<span title="{html.escape(value, quote=True)}">{html.escape(label)}</span>'
-
-def html_score_mixte(v) -> str:
+def html_score_bar(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
-        return ""
+        return "—"
     try:
-        score = float(v)
+        score = max(0.0, min(100.0, float(v)))
     except Exception:
-        return ""
-    value = 100.0 if score >= 85 else 10 + 90 * max(0.0, min(1.0, (score - 35) / (85 - 35)))
-    color = "#1B5E20" if score >= 80 else "#43A047" if score >= 70 else "#C49000" if score >= 60 else "#E67E00" if score >= 50 else "#C62828"
+        return "—"
+    hidden = 100.0 - score
     return (
-        '<div class="score-spark" title="{:.0f}" role="img" aria-label="Score {:.0f}">'
-        '<div class="score-spark-fill" style="width:{:.2f}%;background:{}"></div>'
+        '<div class="score-bar" title="Score global du Sheet : {:.0f}/100" '
+        'role="img" aria-label="Score global {:.0f} sur 100">'
+        '<div class="score-bar-fill" style="clip-path:inset(0 {:.2f}% 0 0)"></div>'
+        '<span>{:.0f}</span>'
         '</div>'
-    ).format(score, score, value, color)
+    ).format(score, score, hidden, score)
 
 def holding_days(v) -> int | None:
     if v is None or (isinstance(v, float) and pd.isna(v)) or not str(v).strip():
@@ -752,12 +696,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         hide_target_decimals = any(
             value is not None and value > 1_000 for value in target_values
         )
-        ratio = compute_ratio(price, buy, exit_)
-        score = safe_float(compute_score(ratio, r.get("note")))
-        score_sheet = safe_float(r.get("score_sheet"))
-        if score is None:
-            score = score_sheet
-        score_mixte = score_sheet if score_sheet is not None else score
+        score = safe_float(r.get("score_sheet"))
         upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
         prompt_version = (
@@ -806,8 +745,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
-            "Score":    fmt_score(score),
-            "Mixte":    html_score_mixte(score_mixte),
+            "Score":    html_score_bar(score),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
@@ -929,18 +867,35 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   box-shadow: 0 0 7px currentColor;
   vertical-align: middle;
 }
-.score-spark {
-  height: 11px;
+.score-bar {
+  position: relative;
+  height: 18px;
   width: 100%;
   margin: 0 auto;
-  background: #8994a3;
+  background: #252d3d;
   display: block;
-  border-radius: 2px;
+  border: 1px solid rgba(148,163,184,.22);
+  border-radius: 999px;
   overflow: hidden;
 }
-.score-spark-fill {
+.score-bar-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #f4cccc 0%, #ffefb2 50%, #c6e5c6 100%);
+  border-radius: inherit;
+}
+.score-bar span {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 100%;
-  border-radius: 2px 0 0 2px;
+  color: #f8fafc;
+  font-size: .68rem;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0,0,0,.95);
 }
 </style>"""
 
@@ -968,12 +923,7 @@ def render_table(rows: list[dict], key: str,
     ) + "</colgroup>"
 
     th_parts = []
-    skip_next = False
     for idx, column in enumerate(cols):
-        if skip_next:
-            skip_next = False
-            continue
-
         label = HEADER_LABELS.get(column, column)
         sortable = column in SORTABLE_COLUMNS
         classes = " ".join(filter(None, (
@@ -989,15 +939,9 @@ def render_table(rows: list[dict], key: str,
         )
         title = f"{label} — cliquer pour trier" if sortable else label
 
-        if column == "Score" and idx + 1 < len(cols) and cols[idx + 1] == "Mixte":
-            th_parts.append(
-                f'<th class="{classes}" colspan="2" title="{title}"{sort_attrs}>{label}</th>'
-            )
-            skip_next = True
-        else:
-            th_parts.append(
-                f'<th class="{classes}" title="{title}"{sort_attrs}>{label}</th>'
-            )
+        th_parts.append(
+            f'<th class="{classes}" title="{title}"{sort_attrs}>{label}</th>'
+        )
 
     trs = []
     for row in rows:
@@ -1117,24 +1061,12 @@ def render_table(rows: list[dict], key: str,
 # Rendu d'un onglet
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None,
-               refresh_scope: str | None = None) -> None:
+def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None) -> None:
     # Conserve la vue initiale historique : Score du plus grand au plus petit.
     rows.sort(key=lambda row: (
         row["_score"] is None,
         -(row["_score"] or 0),
     ))
-
-    if refresh_scope:
-        _, refresh_col = st.columns([9, 2], gap="small")
-        with refresh_col:
-            st.button(
-                "Actualiser",
-                key=f"refresh_{refresh_scope}",
-                width="stretch",
-                on_click=mark_refresh,
-                args=(refresh_scope,),
-            )
 
     render_table(rows, key=key, display_cols=display_cols)
 
@@ -1142,52 +1074,6 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
     if missing:
         with st.expander(f"⚠️ {len(missing)} titre(s) sans cours"):
             st.write(", ".join(missing))
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Onglet Debug
-# ══════════════════════════════════════════════════════════════════════════════
-
-def render_debug(tickers_df: pd.DataFrame, prices: dict) -> None:
-    st.subheader("Diagnostic privé")
-    st.write(f"**{len(tickers_df)} titres chargés depuis SOL input / Registre.**")
-    st.caption("Cet écran n'affiche pas l'aperçu brut du Sheet ni les secrets de connexion.")
-    st.write("Colonnes internes :")
-    st.code(str(list(tickers_df.columns)))
-
-    if tickers_df.empty:
-        st.error("DataFrame vide — impossible d'afficher les diagnostics.")
-        return
-
-    st.subheader("Diagnostic logique MAJ")
-    debug_rows = []
-    today = date.today()
-    for _, row in tickers_df.iterrows():
-        yf = str(row.get("yf_ticker", "") or "")
-        maj_raw = row.get("last_update")
-
-        maj_date = None
-        try:
-            if pd.notna(maj_raw) and maj_raw:
-                maj_date = maj_raw if isinstance(maj_raw, date) else pd.to_datetime(maj_raw).date()
-        except Exception:
-            pass
-
-        older_than_30 = (today - maj_date).days > 30 if maj_date is not None else False
-
-        quote = prices.get(yf.upper(), {})
-        debug_rows.append({
-            "gf_ticker": row.get("gf_ticker", ""),
-            "yf_ticker": yf,
-            "name": row.get("name", ""),
-            "MAJ_raw": maj_raw,
-            "MAJ_date": maj_date,
-            "older_than_30": older_than_30,
-            "price": quote.get("price"),
-            "variation": quote.get("chg"),
-            "Yahoo_error": quote.get("error", ""),
-        })
-
-    st.dataframe(pd.DataFrame(debug_rows), width="stretch", hide_index=True, height=500)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APP PRINCIPALE
@@ -1416,8 +1302,26 @@ if dupes:
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
-# Placeholder pour stats (mise à jour après fetch des prix)
-stats_placeholder = st.empty()
+def mark_refresh() -> None:
+    """Actualise le Sheet et tous les cours depuis un point unique."""
+    st.session_state["last_action"] = "refresh"
+    st.session_state["refresh_nonce"] = time.time_ns()
+
+
+# L'actualisation est intégrée à la synthèse plutôt que répétée dans les onglets.
+stats_col, refresh_col = st.columns(
+    [9, 1.45], gap="small", vertical_alignment="center",
+)
+with stats_col:
+    stats_placeholder = st.empty()
+with refresh_col:
+    st.button(
+        "↻ Actualiser",
+        key="refresh_all",
+        help="Actualiser le Google Sheet et tous les cours",
+        width="stretch",
+        on_click=mark_refresh,
+    )
 
 def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
     ok_str   = f"{ok}/{total}" if ok is not None else "…"
@@ -1461,21 +1365,8 @@ wl_yf = tickers_for(wl_df)
 asia_yf = tickers_for(asia_df)
 all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *asia_yf)))
 
-def mark_refresh(scope: str) -> None:
-    st.session_state["last_action"] = "refresh"
-    st.session_state["refresh_scope"] = scope
-    st.session_state["refresh_nonce"] = time.time_ns()
-
-
-
 last_action = st.session_state.pop("last_action", "")
-refresh_scope = st.session_state.pop("refresh_scope", "")
-active_yf = (
-    pf_yf if refresh_scope == "pf"
-    else wl_yf if refresh_scope == "wl"
-    else asia_yf if refresh_scope == "asia"
-    else all_yf
-)
+active_yf = all_yf
 
 # ── 2. Cours et noms Yahoo ────────────────────────────────────────────────────
 data_key = all_yf
@@ -1537,19 +1428,16 @@ rows_pf = build_rows(pf_df, prices, names, True)
 rows_wl = build_rows(wl_df, prices, names, False)
 rows_asia = build_rows(asia_df, prices, names, False)
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
     f"Analysés ({len(wl_df)})",
     f"Asie ({len(asia_df)})",
-    "Diagnostic",
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
-    render_tab(rows_pf, key="pf", display_cols=main_cols, refresh_scope="pf")
+    render_tab(rows_pf, key="pf", display_cols=main_cols)
 with tab2:
-    render_tab(rows_wl, key="wl", display_cols=main_cols, refresh_scope="wl")
+    render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
-    render_tab(rows_asia, key="asia", display_cols=main_cols, refresh_scope="asia")
-with tab4:
-    render_debug(tickers_df, prices)
+    render_tab(rows_asia, key="asia", display_cols=main_cols)
 
