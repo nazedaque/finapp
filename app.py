@@ -84,23 +84,22 @@ access_guard()
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Audit", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Zone", "Buy", "Fair", "Trim", "Exit", "Conf.", "Action", "Commentaires",
+    "MAJ", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "Score", "Mixte", "Zone", "Buy", "Fair", "Trim", "Exit", "Commentaires",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "Audit": "48px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
+    "MAJ": "46px", "Pays": "36px", "Ticker": "59px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
-    "Score": "35px", "Zone": "74px", "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
-    "Conf.": "72px", "Action": "115px", "Commentaires": "177px",
+    "Score": "35px", "Mixte": "124px", "Zone": "74px",
+    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
 }
-CENTER = {"MAJ", "Audit", "Pays", "Prix", "Var %", "Upside", "Score", "Zone",
-          "Buy", "Fair", "Trim", "Exit", "Qual", "Conf."}
+CENTER = {"MAJ", "Pays", "Prix", "Var %", "Upside", "Score", "Mixte", "Zone",
+          "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
 HEADER_CENTER = CENTER | {"Commentaires"}
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
-    "Audit": "text",
     "Pays": "text",
     "Ticker": "text",
     "Société": "text",
@@ -110,8 +109,6 @@ SORTABLE_COLUMNS = {
     "Var %": "number",
     "Score": "number",
     "Zone": "text",
-    "Conf.": "text",
-    "Action": "text",
     "Commentaires": "text",
 }
 
@@ -749,14 +746,12 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         score_sheet = safe_float(r.get("score_sheet"))
         if score is None:
             score = score_sheet
+        score_mixte = score_sheet if score_sheet is not None else score
         upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
         zone = compute_zone(price, buy, fair, trim, exit_) or (
             "" if pd.isna(r.get("zone")) else str(r.get("zone")).strip()
         )
-        audit = "" if pd.isna(r.get("verif")) else str(r.get("verif")).strip()
-        confidence = "" if pd.isna(r.get("confidence")) else str(r.get("confidence")).strip()
-        action = "" if pd.isna(r.get("next_action")) else str(r.get("next_action")).strip()
         comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
 
         gf = str(r["gf_ticker"])
@@ -775,7 +770,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_flagged":      flagged,
             "_sort": {
                 "MAJ": r.get("last_update").toordinal() if isinstance(r.get("last_update"), date) else None,
-                "Audit": audit,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
                 "Société": name_u,
@@ -785,12 +779,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Var %": chg,
                 "Score": score,
                 "Zone": zone,
-                "Conf.": confidence,
-                "Action": action,
                 "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
-            "Audit":    html_audit(audit),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{html.escape(name_u, quote=True)}">{html.escape(name_html)}</span>',
@@ -799,13 +790,12 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
             "Score":    fmt_score(score),
+            "Mixte":    html_score_mixte(score_mixte),
             "Zone":     html_zone(zone),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
-            "Conf.":    html_confidence(confidence),
-            "Action":   html.escape(action),
             "Commentaires": html.escape(comments),
         })
     return rows
@@ -1111,14 +1101,9 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
         -(row["_score"] or 0),
     ))
 
-    help_col, refresh_col = st.columns([9, 2], gap="small")
-    with help_col:
-        st.markdown(
-            '<div class="wl-sort-help">Tri : cliquez sur un en-tête de colonne</div>',
-            unsafe_allow_html=True,
-        )
-    with refresh_col:
-        if refresh_scope:
+    if refresh_scope:
+        _, refresh_col = st.columns([9, 2], gap="small")
+        with refresh_col:
             st.button(
                 "Actualiser",
                 key=f"refresh_{refresh_scope}",
@@ -1339,12 +1324,6 @@ hr { border-color: #1e2535 !important; }
 }
 </style>
 """, unsafe_allow_html=True)
-
-st.markdown(
-    '<div style="margin:-2px 0 10px;color:#64748b;font-size:.76rem">'
-    'FINAPP SOL&nbsp;&nbsp;•&nbsp;&nbsp;Registre privé en lecture seule</div>',
-    unsafe_allow_html=True,
-)
 
 components.html("""
 <script>
