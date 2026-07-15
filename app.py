@@ -234,7 +234,10 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
         )
 
     df["portif"] = df["portif"].map(
-        lambda v: 1 if str(v).strip() in ("1", "TRUE", "True", "true") else 0)
+        lambda v: 1
+        if parse_num(v) == 1 or str(v).strip().upper() in ("OUI", "TRUE", "VRAI")
+        else 0
+    )
     df["name"] = df["name"].apply(
         lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip())
     for col in NUMERIC_COLS:
