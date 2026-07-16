@@ -205,19 +205,19 @@ access_guard()
 
 DISPLAY_COLS = [
     "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Buy", "Fair", "Trim", "Exit", "Commentaires",
+    "Score", "Buy", "Fair", "Trim", "Exit",
 ]
 COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
-    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
+    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
 }
 CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
-GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
-HEADER_CENTER = CENTER | {"Commentaires"}
+GROUP_STARTS = {"Prix", "Score", "Buy"}
+HEADER_CENTER = CENTER
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
@@ -231,7 +231,6 @@ SORTABLE_COLUMNS = {
     "Upside": "number",
     "Var %": "number",
     "Score": "number",
-    "Commentaires": "text",
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -259,6 +258,30 @@ def parse_num(v) -> float | None:
     if re.match(r"^\d{1,3}(\.\d{3}){2,}$", s): return float(s.replace(".", ""))
     try: return float(s)
     except ValueError: return None
+
+
+def parse_sheet_date(v):
+    """Normalise une date texte, Python ou un numéro de série Google Sheets."""
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    if not isinstance(v, str):
+        try:
+            serial = float(v)
+            if 1 <= serial <= 100_000:
+                return (pd.Timestamp("1899-12-30") + pd.to_timedelta(serial, unit="D")).date()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    parsed = pd.to_datetime(v, dayfirst=True, errors="coerce")
+    return None if pd.isna(parsed) else parsed.date()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -312,6 +335,8 @@ SCREENING_COL_NORMALIZED = {
     "devise": "currency",
     "qualite provisoire": "note",
     "buy provisoire": "buy",
+    "fair provisoire": "fair",
+    "trim provisoire": "trim",
     "exit provisoire": "exit",
     "verdict": "screening_verdict",
     "confiance": "confidence",
@@ -464,13 +489,11 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
         if col in df.columns:
             df[col] = df[col].apply(parse_num)
     if "last_update" in df.columns:
-        df["last_update"] = pd.to_datetime(
-            df["last_update"], dayfirst=True, errors="coerce").dt.date
+        df["last_update"] = df["last_update"].apply(parse_sheet_date)
     else:
         df["last_update"] = None
     if "purchase_date" in df.columns:
-        df["purchase_date"] = pd.to_datetime(
-            df["purchase_date"], dayfirst=True, errors="coerce").dt.date
+        df["purchase_date"] = df["purchase_date"].apply(parse_sheet_date)
 
     # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
     # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
@@ -532,11 +555,12 @@ def _normalize_screening_candidates(
     df["name"] = df["name"].apply(
         lambda value: "" if pd.isna(value) else str(value).strip()
     )
-    for column in ("note", "buy", "exit", "spot_sheet"):
+    for column in ("note", "buy", "fair", "trim", "exit", "spot_sheet"):
         df[column] = df[column].apply(parse_num)
-    df["last_update"] = pd.to_datetime(
-        df["last_update"], dayfirst=True, errors="coerce"
-    ).dt.date
+    df["last_update"] = df["last_update"].apply(parse_sheet_date)
+
+    # Le score provisoire du screening doit aussi alimenter la colonne Score.
+    df["score_sheet"] = df["note"]
 
     df["yf_ticker"] = df["gf_ticker"]
     df["portif"] = 0
@@ -1002,8 +1026,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         )
         audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
         days = holding_days(r.get("purchase_date"))
-        comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
-
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
         flagged = bool(r.get("flagged", False))
@@ -1034,7 +1056,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Upside": upside,
                 "Var %": chg,
                 "Score": score,
-                "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
             "Audit":    audit_html,
@@ -1051,7 +1072,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
-            "Commentaires": html.escape(comments),
         })
     return rows
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1746,8 +1766,8 @@ rows_asia = build_rows(asia_df, prices, names, False)
 tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
     f"Watchlist ({len(wl_df)})",
-    f"À analyser ({len(to_analyze_df)})",
     f"Asie ({len(asia_df)})",
+    f"À analyser ({len(to_analyze_df)})",
 ])
 main_cols = table_cols_with_holding_days()
 with tab1:
@@ -1755,7 +1775,7 @@ with tab1:
 with tab2:
     render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
-    render_tab(rows_to_analyze, key="screening", display_cols=main_cols)
-with tab4:
     render_tab(rows_asia, key="asia", display_cols=main_cols)
+with tab4:
+    render_tab(rows_to_analyze, key="screening", display_cols=main_cols)
 
