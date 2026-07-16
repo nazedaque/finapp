@@ -26,6 +26,7 @@ st.set_page_config(page_title="Finapp SOL", page_icon=None, layout="wide",
 APP_TITLE         = "Finapp SOL"
 SHEET_ID          = "1P6f-aDWgS6a9qstyazQlITGv6NBraU9yG3uN1Fu8R1o"
 SHEET_NAME        = "Registre"
+SCREENING_SHEET_NAME = "Screening"
 REFRESH_TTL       = 15 * 60
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
@@ -303,6 +304,22 @@ SHEET_COL_NORMALIZED = {
     "yf ticker":   "yf_ticker",
     "yf_ticker":   "yf_ticker",
 }
+SCREENING_COL_NORMALIZED = {
+    "ticker": "gf_ticker",
+    "entreprise": "name",
+    "societe": "name",
+    "cours": "spot_sheet",
+    "devise": "currency",
+    "qualite provisoire": "note",
+    "buy provisoire": "buy",
+    "exit provisoire": "exit",
+    "verdict": "screening_verdict",
+    "confiance": "confidence",
+    "lacunes materielles": "comments",
+    "date screening": "last_update",
+    "version prompt": "screening_prompt_version",
+    "statut": "screening_status",
+}
 NUMERIC_COLS = [
     "note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet",
     "upside_fair_sheet", "upside_trim_sheet",
@@ -394,6 +411,11 @@ def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
     return df
 
 
+def _read_screening_sheet(ttl: str | int = "5m") -> pd.DataFrame:
+    """Lit l'onglet Screening avec la même connexion Google privée."""
+    return _private_sheet_connection().read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
+
+
 def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
     """Charge et normalise SOL input sans rendre le Sheet public."""
     try:
@@ -468,6 +490,77 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
     st.session_state["ticker_dupes"] = dupes.to_dict("records") if not dupes.empty else []
 
     return df.reset_index(drop=True), "SOL input / Registre (privé)"
+
+
+def _empty_screening_candidates() -> pd.DataFrame:
+    columns = list(dict.fromkeys(SHEET_COL_NORMALIZED.values()))
+    columns.extend(["screening_verdict", "screening_status", "screened_only", "_score_sheet_color"])
+    return pd.DataFrame(columns=columns)
+
+
+def _normalize_screening_candidates(
+    raw_df: pd.DataFrame,
+    registry_tickers,
+) -> pd.DataFrame:
+    """Convertit les screenings à approfondir vers le format du tableau Finapp."""
+    rename_map = {
+        column: SCREENING_COL_NORMALIZED[_normalize_col(column)]
+        for column in raw_df.columns
+        if _normalize_col(column) in SCREENING_COL_NORMALIZED
+    }
+    df = raw_df.rename(columns=rename_map).copy()
+    if "gf_ticker" not in df.columns or "screening_verdict" not in df.columns:
+        return _empty_screening_candidates()
+
+    df = df[df["gf_ticker"].notna()].copy()
+    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip().str.upper()
+    df = df[~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])].copy()
+    df = df[df["screening_verdict"].apply(_normalize_col) == "approfondir"].copy()
+
+    registry_set = {
+        str(ticker).strip().upper()
+        for ticker in registry_tickers
+        if pd.notna(ticker) and str(ticker).strip()
+    }
+    df = df[~df["gf_ticker"].isin(registry_set)].copy()
+    df = df.drop_duplicates(subset=["gf_ticker"], keep="last")
+
+    for column in dict.fromkeys(SHEET_COL_NORMALIZED.values()):
+        if column not in df.columns:
+            df[column] = pd.NA
+
+    df["name"] = df["name"].apply(
+        lambda value: "" if pd.isna(value) else str(value).strip()
+    )
+    for column in ("note", "buy", "exit", "spot_sheet"):
+        df[column] = df[column].apply(parse_num)
+    df["last_update"] = pd.to_datetime(
+        df["last_update"], dayfirst=True, errors="coerce"
+    ).dt.date
+
+    df["yf_ticker"] = df["gf_ticker"]
+    df["portif"] = 0
+    df["prompt_version"] = pd.NA
+    df["verif"] = pd.NA
+    df["verif_display"] = ""
+    df["flagged"] = False
+    df["screened_only"] = True
+    df["_score_sheet_color"] = None
+    return df.reset_index(drop=True)
+
+
+def load_screening_candidates(
+    registry_tickers,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    """Charge les titres APPROFONDIR encore absents du Registre."""
+    try:
+        raw_df = _read_screening_sheet(ttl=0 if force_refresh else "5m")
+    except Exception as exc:
+        raise RuntimeError(
+            "Impossible de lire SOL input / Screening avec la connexion Google privée."
+        ) from exc
+    return _normalize_screening_candidates(raw_df, registry_tickers)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Métadonnées (noms) — parallèle, cache 7j
@@ -901,7 +994,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         prompt_version = (
             "" if pd.isna(r.get("prompt_version")) else str(r.get("prompt_version")).strip()
         )
-        underwritten = bool(prompt_version) or sum(value is not None for value in target_values) >= 3
+        screened_value = r.get("screened_only", False)
+        screened_only = bool(screened_value) if pd.notna(screened_value) else False
+        underwritten = not screened_only and (
+            bool(prompt_version) or sum(value is not None for value in target_values) >= 3
+        )
         audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
         days = holding_days(r.get("purchase_date"))
         comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
@@ -1266,16 +1363,20 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 # ── 1. Sheet en premier ───────────────────────────────────────────────────────
 force_sheet_refresh = st.session_state.get("last_action") == "refresh"
 cached_tickers_df = st.session_state.get("tickers_df")
+cached_screening_df = st.session_state.get("screening_df")
 
-if cached_tickers_df is not None and not force_sheet_refresh:
+if (
+    cached_tickers_df is not None
+    and cached_screening_df is not None
+    and not force_sheet_refresh
+):
     tickers_df = cached_tickers_df.copy(deep=True)
+    screening_df = cached_screening_df.copy(deep=True)
     data_source = st.session_state.get("data_source", "Google Sheet")
 else:
     with st.spinner("Chargement du Google Sheet…"):
         try:
             tickers_df, data_source = load_tickers(force_refresh=force_sheet_refresh)
-            st.session_state["tickers_df"] = tickers_df.copy(deep=True)
-            st.session_state["data_source"] = data_source
         except Exception as exc:
             if cached_tickers_df is None:
                 st.error(str(exc))
@@ -1283,6 +1384,22 @@ else:
             st.warning(f"Google Sheet indisponible : données précédentes conservées ({exc}).")
             tickers_df = cached_tickers_df.copy(deep=True)
             data_source = st.session_state.get("data_source", "Cache de session")
+        try:
+            screening_df = load_screening_candidates(
+                tickers_df["gf_ticker"],
+                force_refresh=force_sheet_refresh,
+            )
+        except Exception as exc:
+            if cached_screening_df is not None:
+                screening_df = cached_screening_df.copy(deep=True)
+                st.warning(f"Screening indisponible : données précédentes conservées ({exc}).")
+            else:
+                screening_df = _empty_screening_candidates()
+                st.warning(str(exc))
+
+        st.session_state["tickers_df"] = tickers_df.copy(deep=True)
+        st.session_state["screening_df"] = screening_df.copy(deep=True)
+        st.session_state["data_source"] = data_source
 if tickers_df.empty:
     st.error("L'onglet Registre ne contient aucun titre exploitable.")
     st.stop()
@@ -1297,6 +1414,8 @@ watchlist_all_df = tickers_df[tickers_df["portif"] != 1].copy()
 asia_mask = watchlist_all_df["yf_ticker"].apply(is_asia_ticker)
 asia_df = watchlist_all_df[asia_mask].copy()
 wl_df = watchlist_all_df[~asia_mask].copy()
+to_analyze_df = screening_df.copy()
+non_portfolio_count = len(watchlist_all_df) + len(to_analyze_df)
 
 # ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
@@ -1538,7 +1657,7 @@ def render_topbar(pf_count, wl_count, last_ts, ok=None, total=None):
 """, unsafe_allow_html=True)
 
 # Affichage initial (avant fetch)
-render_topbar(len(pf_df), len(watchlist_all_df), last_ts)
+render_topbar(len(pf_df), non_portfolio_count, last_ts)
 
 def tickers_for(df: pd.DataFrame) -> tuple[str, ...]:
     normalized = (str(t).strip().upper() for t in df["yf_ticker"].dropna())
@@ -1550,8 +1669,9 @@ def table_cols_with_holding_days() -> list[str]:
 
 pf_yf = tickers_for(pf_df)
 wl_yf = tickers_for(wl_df)
+to_analyze_yf = tickers_for(to_analyze_df)
 asia_yf = tickers_for(asia_df)
-all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *asia_yf)))
+all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *to_analyze_yf, *asia_yf)))
 
 last_action = st.session_state.pop("last_action", "")
 active_yf = all_yf
@@ -1587,7 +1707,8 @@ for ticker, quote in fresh_prices.items():
 
 sheet_named_tickers = {
     str(row["yf_ticker"]).strip().upper()
-    for _, row in tickers_df.iterrows()
+    for source_df in (tickers_df, to_analyze_df)
+    for _, row in source_df.iterrows()
     if pd.notna(row.get("name")) and str(row.get("name")).strip()
 }
 name_scope = active_yf if last_action == "refresh" else all_yf
@@ -1609,16 +1730,18 @@ last_ts = st.session_state.get("last_fetch_ts", "—")
 ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 
 # Mise à jour du topbar avec les prix récupérés
-render_topbar(len(pf_df), len(watchlist_all_df), last_ts, ok=ok, total=len(all_yf))
+render_topbar(len(pf_df), non_portfolio_count, last_ts, ok=ok, total=len(all_yf))
 
 # Construire les rows des vues une seule fois
 rows_pf = build_rows(pf_df, prices, names, True)
 rows_wl = build_rows(wl_df, prices, names, False)
+rows_to_analyze = build_rows(to_analyze_df, prices, names, False)
 rows_asia = build_rows(asia_df, prices, names, False)
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
-    f"Analysés ({len(wl_df)})",
+    f"Watchlist ({len(wl_df)})",
+    f"À analyser ({len(to_analyze_df)})",
     f"Asie ({len(asia_df)})",
 ])
 main_cols = table_cols_with_holding_days()
@@ -1627,5 +1750,7 @@ with tab1:
 with tab2:
     render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
+    render_tab(rows_to_analyze, key="screening", display_cols=main_cols)
+with tab4:
     render_tab(rows_asia, key="asia", display_cols=main_cols)
 
