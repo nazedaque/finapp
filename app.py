@@ -32,6 +32,7 @@ BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
 HTTP_RETRIES      = 3
+PROFILE_CACHE_TTL = 7 * 24 * 60 * 60
 
 
 def _secret(path: tuple[str, ...], default=None):
@@ -205,19 +206,19 @@ access_guard()
 
 DISPLAY_COLS = [
     "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Buy", "Fair", "Trim", "Exit", "Commentaires",
+    "Score", "Buy", "Fair", "Trim", "Exit", "Industrie",
 ]
 COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
-    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
+    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Industrie": "145px",
 }
 CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
-GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
-HEADER_CENTER = CENTER | {"Commentaires"}
+GROUP_STARTS = {"Prix", "Score", "Buy", "Industrie"}
+HEADER_CENTER = CENTER
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
@@ -231,7 +232,7 @@ SORTABLE_COLUMNS = {
     "Upside": "number",
     "Var %": "number",
     "Score": "number",
-    "Commentaires": "text",
+    "Industrie": "text",
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -341,7 +342,7 @@ SCREENING_COL_NORMALIZED = {
     "exit provisoire": "exit",
     "verdict": "screening_verdict",
     "confiance": "confidence",
-    "lacunes materielles": "comments",
+    "point decisif": "screening_key_point",
     "date screening": "last_update",
     "version prompt": "screening_prompt_version",
     "statut": "screening_status",
@@ -635,52 +636,68 @@ def iter_completed(futures: dict, timeout: int = 60):
     except TimeoutError:
         return
 
-def _fetch_one_name(t: str) -> tuple[str, str]:
-    """Récupère uniquement le nom — rapide, via history_metadata."""
-    try:
-        tk = yf.Ticker(t)
-        tk.history(period="2d", interval="1d")
-        meta = getattr(tk, "history_metadata", None) or {}
-        name = (meta.get("shortName") or meta.get("longName") or "").strip()
-        if not name:
-            try:
-                info = tk.info or {}
-                name = (info.get("shortName") or info.get("longName") or "").strip()
-            except Exception:
-                pass
-        if not name:
-            try:
-                info = tk.fast_info
-                name = (getattr(info, "shortName", None) or "").strip()
-            except Exception:
-                pass
-        return t, name
-    except Exception:
-        return t, ""
+def _fetch_search_profile(ticker: str) -> tuple[str, dict[str, str]]:
+    """Nom et industrie Yahoo via le résultat exact de la recherche du ticker."""
+    symbol = str(ticker or "").strip().upper()
+    empty = {"name": "", "industry": ""}
+    if not symbol:
+        return symbol, empty
 
-def fetch_name_cached(ticker: str) -> str:
-    return _fetch_one_name(ticker)[1]
+    encoded = urllib.parse.quote(symbol, safe="")
+    url = (
+        "https://query1.finance.yahoo.com/v1/finance/search"
+        f"?q={encoded}&quotesCount=5&newsCount=0&listsCount=0&enableFuzzyQuery=false"
+    )
+    for attempt in range(HTTP_RETRIES):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            quote = next(
+                (
+                    item for item in payload.get("quotes", [])
+                    if str(item.get("symbol", "")).strip().upper() == symbol
+                ),
+                {},
+            )
+            name = str(quote.get("shortname") or quote.get("longname") or "").strip()
+            industry = str(quote.get("industry") or quote.get("sector") or "").strip()
+            return symbol, {"name": name, "industry": industry}
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            retryable = not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
+            if not retryable or attempt + 1 >= HTTP_RETRIES:
+                break
+            time.sleep(0.4 * (2 ** attempt))
+        except Exception:
+            break
+    return symbol, empty
 
-def fetch_names(yf_tickers: tuple[str, ...]) -> dict[str, str]:
-    names: dict[str, str] = {}
+
+@st.cache_data(ttl=PROFILE_CACHE_TTL, show_spinner=False)
+def fetch_profiles(
+    yf_tickers: tuple[str, ...],
+    refresh_nonce: int = 0,
+) -> dict[str, dict[str, str]]:
+    del refresh_nonce  # Permet de réessayer les profils manquants lors d'un rafraîchissement.
+    profiles: dict[str, dict[str, str]] = {}
     tickers = list(yf_tickers)
-    # Requetes unitaires Yahoo : petits batches + courte pause pour limiter la pression.
+    # Requêtes unitaires Yahoo : petits lots et cache long, l'industrie change rarement.
     for i in range(0, len(tickers), YF_META_BATCH_SIZE):
         batch = tickers[i: i + YF_META_BATCH_SIZE]
         executor = ThreadPoolExecutor(max_workers=8)
         try:
-            futures = {executor.submit(fetch_name_cached, t): t for t in batch}
+            futures = {executor.submit(_fetch_search_profile, t): t for t in batch}
             for future in iter_completed(futures):
                 try:
-                    t = futures[future]
-                    names[t] = future.result(timeout=15)
+                    ticker, profile = future.result(timeout=15)
+                    profiles[ticker] = profile
                 except Exception:
-                    names[futures[future]] = ""
+                    profiles[str(futures[future]).upper()] = {"name": "", "industry": ""}
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         if i + YF_META_BATCH_SIZE < len(tickers):
             time.sleep(YF_BATCH_PAUSE_SEC)
-    return names
+    return profiles
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Cours Yahoo Finance
@@ -1031,6 +1048,7 @@ def html_country_flag(ticker: str) -> str:
 
 def build_rows(df_sub: pd.DataFrame, prices: dict,
                names: dict,
+               industries: dict,
                holding_required: bool = False) -> list[dict]:
     rows = []
     for _, r in df_sub.iterrows():
@@ -1045,6 +1063,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         sheet_name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
         name = str(names.get(yf_s, "") or sheet_name)
         name_u = name.upper() if name else ""
+        industry = str(industries.get(yf_s, "") or "").strip()
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
         target_values = tuple(safe_float(value) for value in (buy, fair, trim, exit_))
@@ -1064,7 +1083,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         )
         audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
         days = holding_days(r.get("purchase_date"))
-        comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
         flagged = bool(r.get("flagged", False))
@@ -1095,7 +1113,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Upside": upside,
                 "Var %": chg,
                 "Score": score,
-                "Commentaires": comments,
+                "Industrie": industry,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
             "Audit":    audit_html,
@@ -1112,10 +1130,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
-            "Commentaires": (
-                f'<span class="comment-preview" tabindex="0">'
-                f'{html.escape(comments)}</span>'
-                if comments else ""
+            "Industrie": (
+                f'<span title="{html.escape(industry, quote=True)}">'
+                f'{html.escape(industry)}</span>'
+                if industry else "—"
             ),
         })
     return rows
@@ -1247,52 +1265,6 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-weight: 800;
   line-height: 1;
 }
-.comment-col {
-  position: relative;
-}
-.comment-preview {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: help;
-}
-.comment-preview:focus-visible {
-  outline: 1px solid #60a5fa;
-  outline-offset: 1px;
-  border-radius: 2px;
-}
-.comment-tooltip {
-  position: fixed;
-  z-index: 2147483647;
-  box-sizing: border-box;
-  width: max-content;
-  max-width: min(520px, calc(100vw - 24px));
-  max-height: min(320px, calc(100vh - 24px));
-  overflow-y: auto;
-  padding: 10px 12px;
-  border: 1px solid #3a4660;
-  border-radius: 8px;
-  background: #0f1320;
-  color: #dbe7f8;
-  box-shadow: 0 12px 32px rgba(0,0,0,.55);
-  font-family: 'Inter', sans-serif;
-  font-size: .78rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-2px);
-  transition: opacity .12s ease, transform .12s ease;
-}
-.comment-tooltip.is-visible {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-}
 </style>"""
 
 def _sort_attr(value) -> str:
@@ -1348,7 +1320,6 @@ def render_table(rows: list[dict], key: str,
                 "c" if column in CENTER else "",
                 "group-start" if column in GROUP_STARTS else "",
                 "score-col" if column == "Score" else "",
-                "comment-col" if column == "Commentaires" else "",
             )))
             sort_value = _sort_attr(row.get("_sort", {}).get(column))
             td_parts.append(
@@ -1368,83 +1339,6 @@ def render_table(rows: list[dict], key: str,
 (function () {
   const tableId = __TABLE_ID__;
 
-  function bindCommentTooltips(table, doc) {
-    if (table.dataset.commentTooltipBound === "1") return;
-    table.dataset.commentTooltipBound = "1";
-
-    const tooltipId = tableId + "-comment-tooltip";
-    let tooltip = doc.getElementById(tooltipId);
-    if (!tooltip) {
-      tooltip = doc.createElement("div");
-      tooltip.id = tooltipId;
-      tooltip.className = "comment-tooltip";
-      tooltip.setAttribute("role", "tooltip");
-      doc.body.appendChild(tooltip);
-    }
-
-    let showTimer = null;
-    let activeTarget = null;
-
-    function positionTooltip(target) {
-      const view = doc.defaultView;
-      const targetRect = target.getBoundingClientRect();
-      const tooltipRect = tooltip.getBoundingClientRect();
-      const margin = 12;
-      const gap = 8;
-
-      let left = targetRect.left;
-      left = Math.max(margin, Math.min(left, view.innerWidth - tooltipRect.width - margin));
-
-      let top = targetRect.bottom + gap;
-      if (top + tooltipRect.height > view.innerHeight - margin) {
-        top = Math.max(margin, targetRect.top - tooltipRect.height - gap);
-      }
-
-      tooltip.style.left = left + "px";
-      tooltip.style.top = top + "px";
-    }
-
-    function showTooltip(target) {
-      const comment = target.textContent.trim();
-      if (!comment) return;
-      activeTarget = target;
-      tooltip.textContent = comment;
-      tooltip.classList.add("is-visible");
-      target.setAttribute("aria-describedby", tooltipId);
-      positionTooltip(target);
-    }
-
-    function queueTooltip(target) {
-      window.clearTimeout(showTimer);
-      showTimer = window.setTimeout(function () { showTooltip(target); }, 500);
-    }
-
-    function hideTooltip() {
-      window.clearTimeout(showTimer);
-      showTimer = null;
-      if (activeTarget) activeTarget.removeAttribute("aria-describedby");
-      activeTarget = null;
-      tooltip.classList.remove("is-visible");
-    }
-
-    table.querySelectorAll(".comment-preview").forEach(function (target) {
-      target.addEventListener("mouseenter", function () { queueTooltip(target); });
-      target.addEventListener("mousemove", function () {
-        hideTooltip();
-        queueTooltip(target);
-      });
-      target.addEventListener("mouseleave", hideTooltip);
-      target.addEventListener("focus", function () { showTooltip(target); });
-      target.addEventListener("blur", hideTooltip);
-      target.addEventListener("keydown", function (event) {
-        if (event.key === "Escape") hideTooltip();
-      });
-    });
-
-    doc.defaultView.addEventListener("resize", hideTooltip);
-    doc.addEventListener("scroll", hideTooltip, true);
-  }
-
   function bindSort(attempt) {
     const doc = window.parent.document;
     const table = doc.getElementById(tableId);
@@ -1454,7 +1348,6 @@ def render_table(rows: list[dict], key: str,
       }
       return;
     }
-    bindCommentTooltips(table, doc);
     if (table.dataset.sortBound === "1") return;
     table.dataset.sortBound = "1";
 
@@ -1871,7 +1764,7 @@ all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *to_analyze_yf, *asia_yf)))
 last_action = st.session_state.pop("last_action", "")
 active_yf = all_yf
 
-# ── 2. Cours et noms Yahoo ────────────────────────────────────────────────────
+# ── 2. Cours, noms et industries Yahoo ───────────────────────────────────────
 data_key = all_yf
 same_data_key = st.session_state.get("data_key") == data_key
 cached_prices = dict(st.session_state.get("prices_data", {}))
@@ -1893,25 +1786,37 @@ else:
     st.session_state["prices_data"] = prices
     st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
-# Le endpoint chart fournit généralement le nom avec le prix. yfinance.info
-# n'est utilisé que pour les nouveaux tickers dont le nom reste manquant.
+# Le endpoint chart fournit généralement le nom avec le prix.
 names = dict(st.session_state.get("names_data", {}))
 for ticker, quote in fresh_prices.items():
     if quote.get("name"):
         names[ticker] = quote["name"]
 
-name_scope = active_yf if last_action == "refresh" else all_yf
-should_resolve_names = last_action == "refresh" or not same_data_key
-missing_name_tickers = tuple(
-    ticker for ticker in name_scope
-    if not names.get(ticker)
+had_profile_cache = "profiles_data" in st.session_state
+profiles = dict(st.session_state.get("profiles_data", {}))
+profile_scope = active_yf if last_action == "refresh" else all_yf
+should_resolve_profiles = last_action == "refresh" or not same_data_key or not had_profile_cache
+missing_profile_tickers = tuple(
+    ticker for ticker in profile_scope
+    if not profiles.get(ticker, {}).get("industry") or not names.get(ticker)
 )
-if should_resolve_names and missing_name_tickers:
-    with st.spinner("Noms des nouveaux tickers…"):
-        names.update(fetch_names(missing_name_tickers))
+if should_resolve_profiles and missing_profile_tickers:
+    with st.spinner("Industries Yahoo…"):
+        profile_nonce = st.session_state.get("refresh_nonce", 0) if last_action == "refresh" else 0
+        profiles.update(fetch_profiles(missing_profile_tickers, profile_nonce))
+
+for ticker, profile in profiles.items():
+    if not names.get(ticker) and profile.get("name"):
+        names[ticker] = profile["name"]
 
 names = {ticker: names[ticker] for ticker in all_yf if ticker in names}
+profiles = {ticker: profiles[ticker] for ticker in all_yf if ticker in profiles}
+industries = {
+    ticker: profiles.get(ticker, {}).get("industry", "")
+    for ticker in all_yf
+}
 st.session_state["names_data"] = names
+st.session_state["profiles_data"] = profiles
 st.session_state["data_key"] = data_key
 
 last_ts = st.session_state.get("last_fetch_ts", "—")
@@ -1922,10 +1827,10 @@ ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
 render_topbar(len(pf_df), non_portfolio_count, last_ts, ok=ok, total=len(all_yf))
 
 # Construire les rows des vues une seule fois
-rows_pf = build_rows(pf_df, prices, names, True)
-rows_wl = build_rows(wl_df, prices, names, False)
-rows_to_analyze = build_rows(to_analyze_df, prices, names, False)
-rows_asia = build_rows(asia_df, prices, names, False)
+rows_pf = build_rows(pf_df, prices, names, industries, True)
+rows_wl = build_rows(wl_df, prices, names, industries, False)
+rows_to_analyze = build_rows(to_analyze_df, prices, names, industries, False)
+rows_asia = build_rows(asia_df, prices, names, industries, False)
 
 tab1, tab2, tab3, tab4 = st.tabs([
     f"Portefeuille ({len(pf_df)})",
