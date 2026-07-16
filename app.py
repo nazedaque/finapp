@@ -812,19 +812,20 @@ def safe_float(v) -> float | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fmt_price(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    value = float(v)
+    value = safe_float(v)
+    if value is None: return "—"
     return f"{value:,.0f}" if value > 1_000 else f"{value:,.2f}"
 
 
 def fmt_target(v, hide_decimals: bool = False) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    value = float(v)
+    value = safe_float(v)
+    if value is None: return "—"
     return f"{value:,.0f}" if hide_decimals else f"{value:,.2f}"
 
 def fmt_note(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
-    return str(int(float(v)))
+    value = safe_float(v)
+    if value is None: return "—"
+    return str(int(value))
 
 def fmt_maj(maj_date) -> str:
     """
