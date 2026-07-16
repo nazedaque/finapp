@@ -1042,8 +1042,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         if price is None and pd.notna(r.get("spot_sheet")):
             price = r.get("spot_sheet")
         chg = q.get("chg")
-        name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
-        name = str(name or names.get(yf_s, ""))
+        sheet_name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
+        name = str(names.get(yf_s, "") or sheet_name)
         name_u = name.upper() if name else ""
 
         buy, fair, trim, exit_ = r.get("buy"), r.get("fair"), r.get("trim"), r.get("exit")
@@ -1112,7 +1112,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
-            "Commentaires": html.escape(comments),
+            "Commentaires": (
+                f'<span class="comment-preview" tabindex="0">'
+                f'{html.escape(comments)}</span>'
+                if comments else ""
+            ),
         })
     return rows
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1243,6 +1247,52 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-weight: 800;
   line-height: 1;
 }
+.comment-col {
+  position: relative;
+}
+.comment-preview {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+.comment-preview:focus-visible {
+  outline: 1px solid #60a5fa;
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+.comment-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 24px));
+  max-height: min(320px, calc(100vh - 24px));
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid #3a4660;
+  border-radius: 8px;
+  background: #0f1320;
+  color: #dbe7f8;
+  box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  font-family: 'Inter', sans-serif;
+  font-size: .78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition: opacity .12s ease, transform .12s ease;
+}
+.comment-tooltip.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 </style>"""
 
 def _sort_attr(value) -> str:
@@ -1298,6 +1348,7 @@ def render_table(rows: list[dict], key: str,
                 "c" if column in CENTER else "",
                 "group-start" if column in GROUP_STARTS else "",
                 "score-col" if column == "Score" else "",
+                "comment-col" if column == "Commentaires" else "",
             )))
             sort_value = _sort_attr(row.get("_sort", {}).get(column))
             td_parts.append(
@@ -1317,6 +1368,83 @@ def render_table(rows: list[dict], key: str,
 (function () {
   const tableId = __TABLE_ID__;
 
+  function bindCommentTooltips(table, doc) {
+    if (table.dataset.commentTooltipBound === "1") return;
+    table.dataset.commentTooltipBound = "1";
+
+    const tooltipId = tableId + "-comment-tooltip";
+    let tooltip = doc.getElementById(tooltipId);
+    if (!tooltip) {
+      tooltip = doc.createElement("div");
+      tooltip.id = tooltipId;
+      tooltip.className = "comment-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      doc.body.appendChild(tooltip);
+    }
+
+    let showTimer = null;
+    let activeTarget = null;
+
+    function positionTooltip(target) {
+      const view = doc.defaultView;
+      const targetRect = target.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const margin = 12;
+      const gap = 8;
+
+      let left = targetRect.left;
+      left = Math.max(margin, Math.min(left, view.innerWidth - tooltipRect.width - margin));
+
+      let top = targetRect.bottom + gap;
+      if (top + tooltipRect.height > view.innerHeight - margin) {
+        top = Math.max(margin, targetRect.top - tooltipRect.height - gap);
+      }
+
+      tooltip.style.left = left + "px";
+      tooltip.style.top = top + "px";
+    }
+
+    function showTooltip(target) {
+      const comment = target.textContent.trim();
+      if (!comment) return;
+      activeTarget = target;
+      tooltip.textContent = comment;
+      tooltip.classList.add("is-visible");
+      target.setAttribute("aria-describedby", tooltipId);
+      positionTooltip(target);
+    }
+
+    function queueTooltip(target) {
+      window.clearTimeout(showTimer);
+      showTimer = window.setTimeout(function () { showTooltip(target); }, 500);
+    }
+
+    function hideTooltip() {
+      window.clearTimeout(showTimer);
+      showTimer = null;
+      if (activeTarget) activeTarget.removeAttribute("aria-describedby");
+      activeTarget = null;
+      tooltip.classList.remove("is-visible");
+    }
+
+    table.querySelectorAll(".comment-preview").forEach(function (target) {
+      target.addEventListener("mouseenter", function () { queueTooltip(target); });
+      target.addEventListener("mousemove", function () {
+        hideTooltip();
+        queueTooltip(target);
+      });
+      target.addEventListener("mouseleave", hideTooltip);
+      target.addEventListener("focus", function () { showTooltip(target); });
+      target.addEventListener("blur", hideTooltip);
+      target.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") hideTooltip();
+      });
+    });
+
+    doc.defaultView.addEventListener("resize", hideTooltip);
+    doc.addEventListener("scroll", hideTooltip, true);
+  }
+
   function bindSort(attempt) {
     const doc = window.parent.document;
     const table = doc.getElementById(tableId);
@@ -1326,6 +1454,7 @@ def render_table(rows: list[dict], key: str,
       }
       return;
     }
+    bindCommentTooltips(table, doc);
     if (table.dataset.sortBound === "1") return;
     table.dataset.sortBound = "1";
 
@@ -1768,20 +1897,14 @@ else:
 # n'est utilisé que pour les nouveaux tickers dont le nom reste manquant.
 names = dict(st.session_state.get("names_data", {}))
 for ticker, quote in fresh_prices.items():
-    if not names.get(ticker) and quote.get("name"):
+    if quote.get("name"):
         names[ticker] = quote["name"]
 
-sheet_named_tickers = {
-    str(row["yf_ticker"]).strip().upper()
-    for source_df in (tickers_df, to_analyze_df)
-    for _, row in source_df.iterrows()
-    if pd.notna(row.get("name")) and str(row.get("name")).strip()
-}
 name_scope = active_yf if last_action == "refresh" else all_yf
 should_resolve_names = last_action == "refresh" or not same_data_key
 missing_name_tickers = tuple(
     ticker for ticker in name_scope
-    if ticker not in sheet_named_tickers and not names.get(ticker)
+    if not names.get(ticker)
 )
 if should_resolve_names and missing_name_tickers:
     with st.spinner("Noms des nouveaux tickers…"):
