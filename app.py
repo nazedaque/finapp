@@ -1019,7 +1019,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_name":         name,
             "_flagged":      flagged,
             "_sort": {
-                "MAJ": r.get("last_update").toordinal() if isinstance(r.get("last_update"), date) else None,
+                "MAJ": (
+                    r.get("last_update").toordinal()
+                    if isinstance(r.get("last_update"), date) and not pd.isna(r.get("last_update"))
+                    else None
+                ),
                 "Audit": audit_rank,
                 "JRS": days,
                 "Pays": country_code(yf_s),
