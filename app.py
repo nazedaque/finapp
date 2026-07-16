@@ -205,19 +205,19 @@ access_guard()
 
 DISPLAY_COLS = [
     "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
-    "Score", "Buy", "Fair", "Trim", "Exit",
+    "Score", "Buy", "Fair", "Trim", "Exit", "Commentaires",
 ]
 COL_WIDTHS = {
     "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
-    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px",
+    "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Commentaires": "177px",
 }
 CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
-GROUP_STARTS = {"Prix", "Score", "Buy"}
-HEADER_CENTER = CENTER
+GROUP_STARTS = {"Prix", "Score", "Buy", "Commentaires"}
+HEADER_CENTER = CENTER | {"Commentaires"}
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
@@ -231,6 +231,7 @@ SORTABLE_COLUMNS = {
     "Upside": "number",
     "Var %": "number",
     "Score": "number",
+    "Commentaires": "text",
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -385,32 +386,39 @@ def _effective_background_hex(cell: dict) -> str | None:
     return "#{:02x}{:02x}{:02x}".format(*channels)
 
 
-def _read_score_colors(connection, source_columns, row_count: int) -> list[str | None]:
-    """Lit la couleur effective de chaque cellule Score directement dans le Sheet."""
-    score_column = next(
+def _read_sheet_column_colors(
+    connection,
+    source_columns,
+    row_count: int,
+    worksheet_name: str,
+    normalized_columns: dict[str, str],
+    target_column: str,
+) -> list[str | None]:
+    """Lit les couleurs effectives d'une colonne directement dans le Sheet."""
+    source_column = next(
         (
             index
             for index, column in enumerate(source_columns, start=1)
-            if SHEET_COL_NORMALIZED.get(_normalize_col(column)) == "score_sheet"
+            if normalized_columns.get(_normalize_col(column)) == target_column
         ),
         None,
     )
-    if score_column is None or row_count <= 0:
+    if source_column is None or row_count <= 0:
         return [None] * row_count
 
     raw_client = getattr(connection.client, "_client", None)
     if raw_client is None:
         raise RuntimeError("La connexion Google n'expose pas les formats de cellules.")
 
-    column = _column_letter(score_column)
+    column = _column_letter(source_column)
     spreadsheet = raw_client.open_by_key(SHEET_ID)
     metadata = spreadsheet.fetch_sheet_metadata(params={
         "includeGridData": True,
-        "ranges": [f"'{SHEET_NAME}'!{column}2:{column}{row_count + 1}"],
+        "ranges": [f"'{worksheet_name}'!{column}2:{column}{row_count + 1}"],
     })
     sheet = next(
         item for item in metadata.get("sheets", [])
-        if item.get("properties", {}).get("title") == SHEET_NAME
+        if item.get("properties", {}).get("title") == worksheet_name
     )
     data = sheet.get("data", [])
     row_data = data[0].get("rowData", []) if data else []
@@ -419,6 +427,18 @@ def _read_score_colors(connection, source_columns, row_count: int) -> list[str |
         values = row_data[index].get("values", []) if index < len(row_data) else []
         colors.append(_effective_background_hex(values[0]) if values else None)
     return colors
+
+
+def _read_score_colors(connection, source_columns, row_count: int) -> list[str | None]:
+    """Lit les couleurs de Score dans le Registre."""
+    return _read_sheet_column_colors(
+        connection,
+        source_columns,
+        row_count,
+        SHEET_NAME,
+        SHEET_COL_NORMALIZED,
+        "score_sheet",
+    )
 
 
 def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
@@ -437,8 +457,25 @@ def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
 
 
 def _read_screening_sheet(ttl: str | int = "5m") -> pd.DataFrame:
-    """Lit l'onglet Screening avec la même connexion Google privée."""
-    return _private_sheet_connection().read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
+    """Lit les valeurs et couleurs du score provisoire de Screening."""
+    connection = _private_sheet_connection()
+    df = connection.read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
+    try:
+        df["_score_sheet_color"] = _read_sheet_column_colors(
+            connection,
+            df.columns,
+            len(df),
+            SCREENING_SHEET_NAME,
+            SCREENING_COL_NORMALIZED,
+            "note",
+        )
+        st.session_state.pop("screening_score_color_warning", None)
+    except Exception:
+        df["_score_sheet_color"] = None
+        st.session_state["screening_score_color_warning"] = (
+            "Les couleurs du score provisoire n'ont pas pu être relues dans le Google Sheet."
+        )
+    return df
 
 
 def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
@@ -569,7 +606,8 @@ def _normalize_screening_candidates(
     df["verif_display"] = ""
     df["flagged"] = False
     df["screened_only"] = True
-    df["_score_sheet_color"] = None
+    if "_score_sheet_color" not in df.columns:
+        df["_score_sheet_color"] = None
     return df.reset_index(drop=True)
 
 
@@ -1026,6 +1064,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         )
         audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
         days = holding_days(r.get("purchase_date"))
+        comments = "" if pd.isna(r.get("comments")) else str(r.get("comments"))
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
         flagged = bool(r.get("flagged", False))
@@ -1056,6 +1095,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Upside": upside,
                 "Var %": chg,
                 "Score": score,
+                "Commentaires": comments,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
             "Audit":    audit_html,
@@ -1072,6 +1112,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
             "Exit":     fmt_target(exit_, hide_target_decimals),
+            "Commentaires": html.escape(comments),
         })
     return rows
 # ══════════════════════════════════════════════════════════════════════════════
