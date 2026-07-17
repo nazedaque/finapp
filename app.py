@@ -563,7 +563,7 @@ def _normalize_screening_candidates(
     raw_df: pd.DataFrame,
     registry_tickers,
 ) -> pd.DataFrame:
-    """Convertit les screenings à approfondir vers le format du tableau Finapp."""
+    """Convertit les screenings non vétos vers le format du tableau Finapp."""
     rename_map = {
         column: SCREENING_COL_NORMALIZED[_normalize_col(column)]
         for column in raw_df.columns
@@ -576,7 +576,8 @@ def _normalize_screening_candidates(
     df = df[df["gf_ticker"].notna()].copy()
     df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip().str.upper()
     df = df[~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])].copy()
-    df = df[df["screening_verdict"].apply(_normalize_col) == "approfondir"].copy()
+    normalized_verdict = df["screening_verdict"].apply(_normalize_col)
+    df = df[normalized_verdict.isin({"approfondir", "ecarter"})].copy()
 
     registry_set = {
         str(ticker).strip().upper()
@@ -616,7 +617,7 @@ def load_screening_candidates(
     registry_tickers,
     force_refresh: bool = False,
 ) -> pd.DataFrame:
-    """Charge les titres APPROFONDIR encore absents du Registre."""
+    """Charge les titres APPROFONDIR ou ÉCARTER encore absents du Registre."""
     try:
         raw_df = _read_screening_sheet(ttl=0 if force_refresh else "5m")
     except Exception as exc:
@@ -1697,8 +1698,28 @@ if score_color_warning:
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
+
+def _tab_slug_from_label(label) -> str | None:
+    text = str(label or "")
+    prefixes = {
+        "Portefeuille": "portfolio",
+        "Watchlist": "watchlist",
+        "Asie": "asia",
+        "Screenés": "screening",
+    }
+    return next((slug for prefix, slug in prefixes.items() if text.startswith(prefix)), None)
+
+
+def remember_active_tab() -> None:
+    slug = _tab_slug_from_label(st.session_state.get("finapp_tabs"))
+    if slug:
+        st.session_state["active_tab_slug"] = slug
+
+
 def mark_refresh() -> None:
     """Actualise le Sheet et tous les cours depuis un point unique."""
+    remember_active_tab()
+    st.session_state.pop("finapp_tabs", None)
     st.session_state["last_action"] = "refresh"
     st.session_state["refresh_nonce"] = time.time_ns()
 
@@ -1832,12 +1853,23 @@ rows_wl = build_rows(wl_df, prices, names, industries, False)
 rows_to_analyze = build_rows(to_analyze_df, prices, names, industries, False)
 rows_asia = build_rows(asia_df, prices, names, industries, False)
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab_labels = [
     f"Portefeuille ({len(pf_df)})",
     f"Watchlist ({len(wl_df)})",
     f"Asie ({len(asia_df)})",
-    f"À analyser ({len(to_analyze_df)})",
-])
+    f"Screenés ({len(to_analyze_df)})",
+]
+active_tab_slug = st.session_state.get("active_tab_slug", "portfolio")
+default_tab = next(
+    (label for label in tab_labels if _tab_slug_from_label(label) == active_tab_slug),
+    tab_labels[0],
+)
+tab1, tab2, tab3, tab4 = st.tabs(
+    tab_labels,
+    default=default_tab,
+    key="finapp_tabs",
+    on_change=remember_active_tab,
+)
 main_cols = table_cols_with_holding_days()
 with tab1:
     render_tab(rows_pf, key="pf", display_cols=main_cols)
