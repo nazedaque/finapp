@@ -930,16 +930,35 @@ def compute_upside(price, fair, trim) -> float | None:
     except Exception: return None
 
 
-def is_buy_or_strong_buy(price, buy, fair) -> bool:
-    """Vrai lorsque le cours se situe en zone Strong Buy ou Buy."""
+def html_screening_action(price, buy, fair) -> tuple[str, int]:
+    """Symbole d'action underwriting pour les titres uniquement screenés."""
     price_value = safe_float(price)
     buy_value = safe_float(buy)
     fair_value = safe_float(fair)
+    if (
+        price_value is None
+        or buy_value is None
+        or fair_value is None
+        or price_value > fair_value
+    ):
+        return "—", 0
+
+    if price_value <= buy_value:
+        symbol = "◆"
+        label = "Strong Buy — underwriting à lancer"
+        color = "#f59e0b"
+        rank = 2
+    else:
+        symbol = "◇"
+        label = "Buy — underwriting à envisager"
+        color = "#d6a756"
+        rank = 1
+
+    safe_label = html.escape(label, quote=True)
     return (
-        price_value is not None
-        and buy_value is not None
-        and fair_value is not None
-        and price_value <= fair_value
+        f'<span class="screening-action" title="{safe_label}" '
+        f'role="img" aria-label="{safe_label}" style="color:{color}">{symbol}</span>',
+        rank,
     )
 
 
@@ -1209,6 +1228,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         analytic_complete = quality is not None and all(
             value is not None for value in target_values
         )
+        screening_action_html, screening_action_rank = (
+            html_screening_action(price, buy, fair) if screened_only else ("", 0)
+        )
         audit_html, audit_rank = html_audit(
             r.get("_audit_status"),
             underwritten,
@@ -1232,7 +1254,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_ticker":       gf,
             "_name":         name,
             "_flagged":      flagged,
-            "_buy_zone":     screened_only and is_buy_or_strong_buy(price, buy, fair),
             "_sort": {
                 "MAJ": (
                     r.get("last_update").toordinal()
@@ -1240,7 +1261,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                     else None
                 ),
                 "Audit": audit_rank,
-                "JRS": days,
+                "JRS": screening_action_rank if screened_only else days,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
                 "Société": name_u,
@@ -1253,7 +1274,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
             "Audit":    audit_html,
-            "JRS":      fmt_holding_days(r.get("purchase_date"), holding_required),
+            "JRS":      (
+                screening_action_html
+                if screened_only
+                else fmt_holding_days(r.get("purchase_date"), holding_required)
+            ),
             "Pays":     html_country_flag(yf_s),
             "Ticker":   html_ticker_link(yf_s, gf),
             "Société":  f'<span title="{html.escape(name_u, quote=True)}">{html.escape(name_html)}</span>',
@@ -1375,7 +1400,13 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
-.wl-buy-zone td:not(.score-col) { font-weight: 700; }
+.screening-action {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
 .wl-country-flag {
   display: inline-block;
   width: 15px;
@@ -1453,8 +1484,6 @@ def render_table(rows: list[dict], key: str,
         row_classes = []
         if row["_flagged"]:
             row_classes.append("wl-flagged")
-        if key == "screening" and row.get("_buy_zone"):
-            row_classes.append("wl-buy-zone")
         row_class = " ".join(row_classes)
         td_parts = []
         for column in cols:
