@@ -946,18 +946,16 @@ def html_screening_action(price, buy, fair) -> tuple[str, int]:
     if price_value <= buy_value:
         symbol = "◆"
         label = "Strong Buy — underwriting à lancer"
-        color = "#f59e0b"
         rank = 2
     else:
         symbol = "◇"
         label = "Buy — underwriting à envisager"
-        color = "#d6a756"
         rank = 1
 
     safe_label = html.escape(label, quote=True)
     return (
         f'<span class="screening-action" title="{safe_label}" '
-        f'role="img" aria-label="{safe_label}" style="color:{color}">{symbol}</span>',
+        f'role="img" aria-label="{safe_label}">{symbol}</span>',
         rank,
     )
 
