@@ -1537,18 +1537,10 @@ if tickers_df.empty:
     st.error("L'onglet Registre ne contient aucun titre exploitable.")
     st.stop()
 
-ASIA_SUFFIXES = (".T", ".KQ", ".KS", ".SI", ".HK")
-
-def is_asia_ticker(ticker: str) -> bool:
-    return str(ticker or "").upper().strip().endswith(ASIA_SUFFIXES)
-
 pf_df = tickers_df[tickers_df["portif"] == 1].copy()
-watchlist_all_df = tickers_df[tickers_df["portif"] != 1].copy()
-asia_mask = watchlist_all_df["yf_ticker"].apply(is_asia_ticker)
-asia_df = watchlist_all_df[asia_mask].copy()
-wl_df = watchlist_all_df[~asia_mask].copy()
+wl_df = tickers_df[tickers_df["portif"] != 1].copy()
 to_analyze_df = screening_df.copy()
-non_portfolio_count = len(watchlist_all_df) + len(to_analyze_df)
+non_portfolio_count = len(wl_df) + len(to_analyze_df)
 
 # ── CSS global en premier (avant tout élément UI) ─────────────────────────────
 st.markdown("""
@@ -1748,7 +1740,6 @@ def _tab_slug_from_label(label) -> str | None:
     prefixes = {
         "Portefeuille": "portfolio",
         "Watchlist": "watchlist",
-        "Asie": "asia",
         "Screenés": "screening",
     }
     return next((slug for prefix, slug in prefixes.items() if text.startswith(prefix)), None)
@@ -1823,8 +1814,7 @@ def table_cols_with_holding_days() -> list[str]:
 pf_yf = tickers_for(pf_df)
 wl_yf = tickers_for(wl_df)
 to_analyze_yf = tickers_for(to_analyze_df)
-asia_yf = tickers_for(asia_df)
-all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *to_analyze_yf, *asia_yf)))
+all_yf = tuple(dict.fromkeys((*pf_yf, *wl_yf, *to_analyze_yf)))
 
 last_action = st.session_state.pop("last_action", "")
 active_yf = all_yf
@@ -1895,12 +1885,10 @@ render_topbar(len(pf_df), non_portfolio_count, last_ts, ok=ok, total=len(all_yf)
 rows_pf = build_rows(pf_df, prices, names, industries, True)
 rows_wl = build_rows(wl_df, prices, names, industries, False)
 rows_to_analyze = build_rows(to_analyze_df, prices, names, industries, False)
-rows_asia = build_rows(asia_df, prices, names, industries, False)
 
 tab_labels = [
     f"Portefeuille ({len(pf_df)})",
     f"Watchlist ({len(wl_df)})",
-    f"Asie ({len(asia_df)})",
     f"Screenés ({len(to_analyze_df)})",
 ]
 active_tab_slug = st.session_state.get("active_tab_slug", "portfolio")
@@ -1908,7 +1896,7 @@ default_tab = next(
     (label for label in tab_labels if _tab_slug_from_label(label) == active_tab_slug),
     tab_labels[0],
 )
-tab1, tab2, tab3, tab4 = st.tabs(
+tab1, tab2, tab3 = st.tabs(
     tab_labels,
     default=default_tab,
     key="finapp_tabs",
@@ -1920,7 +1908,5 @@ with tab1:
 with tab2:
     render_tab(rows_wl, key="wl", display_cols=main_cols)
 with tab3:
-    render_tab(rows_asia, key="asia", display_cols=main_cols)
-with tab4:
     render_tab(rows_to_analyze, key="screening", display_cols=main_cols)
 
