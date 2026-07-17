@@ -27,6 +27,7 @@ APP_TITLE         = "Finapp SOL"
 SHEET_ID          = "1P6f-aDWgS6a9qstyazQlITGv6NBraU9yG3uN1Fu8R1o"
 SHEET_NAME        = "Registre"
 SCREENING_SHEET_NAME = "Screening"
+AUDITS_SHEET_NAME = "Audits"
 REFRESH_TTL       = 15 * 60
 BATCH_SIZE        = 50
 YF_META_BATCH_SIZE = 10
@@ -347,6 +348,10 @@ SCREENING_COL_NORMALIZED = {
     "version prompt": "screening_prompt_version",
     "statut": "screening_status",
 }
+AUDIT_COL_NORMALIZED = {
+    "ticker": "gf_ticker",
+    "statut audit": "audit_status",
+}
 NUMERIC_COLS = [
     "note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet",
     "upside_fair_sheet", "upside_trim_sheet",
@@ -479,6 +484,12 @@ def _read_screening_sheet(ttl: str | int = "5m") -> pd.DataFrame:
     return df
 
 
+def _read_audits_sheet(ttl: str | int = "5m") -> pd.DataFrame:
+    """Lit les audits réels, source de vérité de la lumière verte."""
+    connection = _private_sheet_connection()
+    return connection.read(worksheet=AUDITS_SHEET_NAME, ttl=ttl)
+
+
 def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
     """Charge et normalise SOL input sans rendre le Sheet public."""
     try:
@@ -555,7 +566,10 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
 
 def _empty_screening_candidates() -> pd.DataFrame:
     columns = list(dict.fromkeys(SHEET_COL_NORMALIZED.values()))
-    columns.extend(["screening_verdict", "screening_status", "screened_only", "_score_sheet_color"])
+    columns.extend([
+        "screening_verdict", "screening_status", "screening_key_point",
+        "screened_only", "_score_sheet_color",
+    ])
     return pd.DataFrame(columns=columns)
 
 
@@ -625,6 +639,39 @@ def load_screening_candidates(
             "Impossible de lire SOL input / Screening avec la connexion Google privée."
         ) from exc
     return _normalize_screening_candidates(raw_df, registry_tickers)
+
+
+def _normalize_audit_statuses(raw_df: pd.DataFrame) -> dict[str, str]:
+    """Conserve le dernier statut d'audit non vide pour chaque ticker."""
+    rename_map = {
+        column: AUDIT_COL_NORMALIZED[_normalize_col(column)]
+        for column in raw_df.columns
+        if _normalize_col(column) in AUDIT_COL_NORMALIZED
+    }
+    df = raw_df.rename(columns=rename_map).copy()
+    if "gf_ticker" not in df.columns or "audit_status" not in df.columns:
+        return {}
+
+    df = df[df["gf_ticker"].notna() & df["audit_status"].notna()].copy()
+    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip().str.upper()
+    df["audit_status"] = df["audit_status"].astype(str).str.strip()
+    df = df[
+        ~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])
+        & df["audit_status"].ne("")
+    ].copy()
+    df = df.drop_duplicates(subset=["gf_ticker"], keep="last")
+    return dict(zip(df["gf_ticker"], df["audit_status"]))
+
+
+def load_audit_statuses(force_refresh: bool = False) -> dict[str, str]:
+    """Charge les statuts depuis Audits ; le Registre ne suffit plus à valider un audit."""
+    try:
+        raw_df = _read_audits_sheet(ttl=0 if force_refresh else "5m")
+    except Exception as exc:
+        raise RuntimeError(
+            "Impossible de lire SOL input / Audits avec la connexion Google privée."
+        ) from exc
+    return _normalize_audit_statuses(raw_df)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Métadonnées (noms) — parallèle, cache 7j
@@ -983,20 +1030,24 @@ def fmt_verif(v) -> str:
     return value
 
 
-def html_audit(v, underwritten: bool) -> tuple[str, int]:
+def html_audit(v, underwritten: bool, screening_key_point=None) -> tuple[str, int]:
     value = fmt_verif(v)
     normalized = _normalize_col(value)
-    audited = normalized in {
-        "pass", "pass avec reserves", "correction materielle", "corrige apres audit",
-    }
-    if audited:
-        color, label, rank = "#22c55e", "Underwrité et audité", 2
+    if normalized == "non auditable":
+        color, label, rank = "#ef4444", "Non auditable", -1
         if value:
             label += f" — {value}"
+    elif value:
+        color, label, rank = "#22c55e", "Underwrité et audité", 2
+        label += f" — {value}"
     elif underwritten:
         color, label, rank = "#facc15", "Underwrité mais non audité", 1
     else:
-        color, label, rank = "#f97316", "Screené uniquement", 0
+        color, rank = "#f97316", 0
+        if screening_key_point is None or pd.isna(screening_key_point):
+            label = "Screené uniquement"
+        else:
+            label = str(screening_key_point).strip() or "Screené uniquement"
     light = (
         f'<span class="audit-light" title="{html.escape(label, quote=True)}" '
         f'role="img" aria-label="{html.escape(label, quote=True)}" '
@@ -1126,7 +1177,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         underwritten = not screened_only and (
             bool(prompt_version) or sum(value is not None for value in target_values) >= 3
         )
-        audit_html, audit_rank = html_audit(r.get("verif"), underwritten)
+        audit_html, audit_rank = html_audit(
+            r.get("_audit_status"),
+            underwritten,
+            r.get("screening_key_point"),
+        )
         days = holding_days(r.get("purchase_date"))
         gf = str(r["gf_ticker"])
         name_html = name_u if name_u else gf
@@ -1497,14 +1552,17 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 force_sheet_refresh = st.session_state.get("last_action") == "refresh"
 cached_tickers_df = st.session_state.get("tickers_df")
 cached_screening_df = st.session_state.get("screening_df")
+cached_audit_statuses = st.session_state.get("audit_statuses")
 
 if (
     cached_tickers_df is not None
     and cached_screening_df is not None
+    and cached_audit_statuses is not None
     and not force_sheet_refresh
 ):
     tickers_df = cached_tickers_df.copy(deep=True)
     screening_df = cached_screening_df.copy(deep=True)
+    audit_statuses = dict(cached_audit_statuses)
     data_source = st.session_state.get("data_source", "Google Sheet")
 else:
     with st.spinner("Chargement du Google Sheet…"):
@@ -1530,12 +1588,29 @@ else:
                 screening_df = _empty_screening_candidates()
                 st.warning(str(exc))
 
+        try:
+            audit_statuses = load_audit_statuses(force_refresh=force_sheet_refresh)
+        except Exception as exc:
+            if cached_audit_statuses is not None:
+                audit_statuses = dict(cached_audit_statuses)
+                st.warning(f"Audits indisponibles : données précédentes conservées ({exc}).")
+            else:
+                # Règle conservatrice : sans preuve dans Audits, aucun feu vert.
+                audit_statuses = {}
+                st.warning(str(exc))
+
         st.session_state["tickers_df"] = tickers_df.copy(deep=True)
         st.session_state["screening_df"] = screening_df.copy(deep=True)
+        st.session_state["audit_statuses"] = dict(audit_statuses)
         st.session_state["data_source"] = data_source
 if tickers_df.empty:
     st.error("L'onglet Registre ne contient aucun titre exploitable.")
     st.stop()
+
+tickers_df["_audit_status"] = (
+    tickers_df["gf_ticker"].astype(str).str.strip().str.upper().map(audit_statuses).fillna("")
+)
+screening_df["_audit_status"] = ""
 
 pf_df = tickers_df[tickers_df["portif"] == 1].copy()
 wl_df = tickers_df[tickers_df["portif"] != 1].copy()
