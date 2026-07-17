@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import html
 import hmac
+import logging
 import re
 import time
 import unicodedata
@@ -18,12 +19,15 @@ import yfinance as yf
 from finapp_logic import (
     clean_sheet_text,
     coalesce_alias_columns,
+    configure_gsheets_timeout,
     finite_float,
     find_sheet_errors,
     merge_quote_cache,
     parse_number,
     stale_quote_tickers,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Config
@@ -43,6 +47,7 @@ YF_META_BATCH_SIZE = 10
 YF_BATCH_PAUSE_SEC = 0.2
 HTTP_RETRIES      = 3
 PROFILE_CACHE_TTL = 7 * 24 * 60 * 60
+GSHEETS_HTTP_TIMEOUT = (5, 15)
 
 
 def _secret(path: tuple[str, ...], default=None):
@@ -366,7 +371,9 @@ def _private_sheet_connection():
     """Retourne la connexion Google privée configurée dans Streamlit."""
     from streamlit_gsheets import GSheetsConnection
 
-    return st.connection("gsheets", type=GSheetsConnection)
+    connection = st.connection("gsheets", type=GSheetsConnection)
+    configure_gsheets_timeout(connection, GSHEETS_HTTP_TIMEOUT)
+    return connection
 
 
 def _column_letter(index: int) -> str:
@@ -1675,6 +1682,7 @@ else:
         try:
             tickers_df, data_source = load_tickers(force_refresh=force_sheet_refresh)
         except Exception as exc:
+            LOGGER.exception("Échec du chargement Google Sheets : Registre")
             if cached_tickers_df is None:
                 st.error(str(exc))
                 st.stop()
@@ -1687,6 +1695,7 @@ else:
                 force_refresh=force_sheet_refresh,
             )
         except Exception as exc:
+            LOGGER.exception("Échec du chargement Google Sheets : Screening")
             if cached_screening_df is not None:
                 screening_df = cached_screening_df.copy(deep=True)
                 st.warning(f"Screening indisponible : données précédentes conservées ({exc}).")
@@ -1697,6 +1706,7 @@ else:
         try:
             audit_statuses = load_audit_statuses(force_refresh=force_sheet_refresh)
         except Exception as exc:
+            LOGGER.exception("Échec du chargement Google Sheets : Audits")
             if cached_audit_statuses is not None:
                 audit_statuses = dict(cached_audit_statuses)
                 st.warning(f"Audits indisponibles : données précédentes conservées ({exc}).")

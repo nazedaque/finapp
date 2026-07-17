@@ -36,6 +36,17 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("stale_quote_tickers(", self.source)
         self.assertIn("merge_quote_cache(cached_prices, fresh_prices, all_yf)", self.source)
         self.assertIn('st.session_state["quote_attempt_times"]', self.source)
+
+    def test_google_sheets_requests_have_a_bounded_timeout(self):
+        self.assertIn("GSHEETS_HTTP_TIMEOUT = (5, 15)", self.source)
+        self.assertIn(
+            "configure_gsheets_timeout(connection, GSHEETS_HTTP_TIMEOUT)",
+            self.source,
+        )
+        self.assertIn(
+            'LOGGER.exception("Échec du chargement Google Sheets : Registre")',
+            self.source,
+        )
         self.assertIn("anciennes valeurs conservées", self.source)
 
     def test_sheet_formula_errors_are_visible_but_not_rendered_as_values(self):

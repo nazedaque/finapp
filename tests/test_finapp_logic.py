@@ -7,6 +7,7 @@ import pandas as pd
 from finapp_logic import (
     clean_sheet_text,
     coalesce_alias_columns,
+    configure_gsheets_timeout,
     compute_ratio,
     compute_score,
     country_code,
@@ -20,6 +21,34 @@ from finapp_logic import (
     safe_date_ordinal,
     stale_quote_tickers,
 )
+
+
+class GSheetsTimeoutTests(unittest.TestCase):
+    def test_wrapped_gspread_client_receives_timeout(self):
+        class RawClient:
+            def __init__(self):
+                self.timeout = None
+
+            def set_timeout(self, timeout):
+                self.timeout = timeout
+
+        class WrappedClient:
+            def __init__(self):
+                self._client = RawClient()
+
+        class Connection:
+            def __init__(self):
+                self.client = WrappedClient()
+
+        connection = Connection()
+        self.assertTrue(configure_gsheets_timeout(connection, (5, 15)))
+        self.assertEqual(connection.client._client.timeout, (5, 15))
+
+    def test_missing_internal_client_is_a_safe_noop(self):
+        class Connection:
+            client = object()
+
+        self.assertFalse(configure_gsheets_timeout(Connection(), (5, 15)))
 
 
 class PortfolioNormalizationTests(unittest.TestCase):

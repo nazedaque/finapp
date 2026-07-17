@@ -67,6 +67,19 @@ COUNTRY_SUFFIXES = tuple(
 )
 
 
+def configure_gsheets_timeout(connection, timeout: tuple[int, int]) -> bool:
+    """Configure le délai réseau du client gspread enveloppé par Streamlit."""
+    try:
+        raw_client = getattr(connection.client, "_client", None)
+        set_timeout = getattr(raw_client, "set_timeout", None)
+        if not callable(set_timeout):
+            return False
+        set_timeout(timeout)
+        return True
+    except Exception:
+        return False
+
+
 def finite_float(value) -> float | None:
     """Convertit une valeur en nombre fini, sinon renvoie None."""
     if value is None:
