@@ -13,8 +13,17 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import date, datetime, timezone
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
+
+from finapp_logic import (
+    clean_sheet_text,
+    coalesce_alias_columns,
+    finite_float,
+    find_sheet_errors,
+    merge_quote_cache,
+    parse_number,
+    stale_quote_tickers,
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Config
@@ -241,26 +250,7 @@ SORTABLE_COLUMNS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 def parse_num(v) -> float | None:
-    if v is None: return None
-    # Les nombres déjà typés par pandas / st-gsheets ne doivent pas repasser
-    # par l'analyse des séparateurs : 80.624 est une décimale, pas 80 624.
-    if not isinstance(v, str):
-        try:
-            return None if pd.isna(v) else float(v)
-        except (TypeError, ValueError):
-            return None
-    s = (str(v).strip().replace("\u202f", "").replace("\xa0", "")
-         .replace(" ", "").replace("%", ""))
-    if not s or s in ("#REF!", "#N/A", "#VALUE!", "#ERROR!", "—", ""): return None
-    if re.match(r"^\d{1,3}(,\d{3})+$", s): return float(s.replace(",", ""))
-    if re.match(r"^\d{1,3}(,\d{3})+,\d{1,2}$", s):
-        parts = s.split(","); return float("".join(parts[:-1]) + "." + parts[-1])
-    if "," in s: return float(s.replace(".", "").replace(",", "."))
-    # L'API Google renvoie les décimales avec un point, même pour un Sheet FR.
-    # Un point unique reste donc décimal ; 1.234.567 reste un entier groupé.
-    if re.match(r"^\d{1,3}(\.\d{3}){2,}$", s): return float(s.replace(".", ""))
-    try: return float(s)
-    except ValueError: return None
+    return parse_number(v)
 
 
 def parse_sheet_date(v):
@@ -356,6 +346,11 @@ AUDIT_COL_NORMALIZED = {
 NUMERIC_COLS = [
     "note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet",
     "upside_fair_sheet", "upside_trim_sheet",
+]
+REGISTER_TEXT_COLS = [
+    "gf_ticker", "yf_ticker", "name", "currency", "url", "comments", "zone",
+    "confidence", "normalization_sensitivity", "accounts_date", "prompt_version",
+    "verif", "audit_impact", "next_action",
 ]
 
 
@@ -488,30 +483,34 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
             "Vérifiez les secrets Streamlit et le partage en lecture avec le compte de service."
         ) from exc
 
-    # Renommage robuste avec normalisation agressive
-    rename_map: dict[str, str] = {}
-    for col in df.columns:
-        norm = _normalize_col(col)
-        if norm in SHEET_COL_NORMALIZED:
-            rename_map[col] = SHEET_COL_NORMALIZED[norm]
-    df = df.rename(columns=rename_map)
+    raw_columns = list(df.columns)
+    st.session_state["sheet_errors"] = find_sheet_errors(df)
+    df, alias_collisions = coalesce_alias_columns(df, SHEET_COL_NORMALIZED)
+    st.session_state["column_alias_collisions"] = alias_collisions
 
     # Colonnes manquantes → NA
     for col in SHEET_COL_NORMALIZED.values():
         if col not in df.columns:
             df[col] = pd.NA
+    for col in REGISTER_TEXT_COLS:
+        if col in df.columns:
+            df[col] = df[col].map(clean_sheet_text)
     df["verif_display"] = df["verif"].apply(fmt_verif)
     df["flagged"] = False
 
     # Nettoyage
-    df = df[df["gf_ticker"].notna()].copy()
-    df = df[~df["gf_ticker"].astype(str).str.strip().isin(
-        ["", "Ticker", "gf_ticker", "nan", "None"])].copy()
+    df["gf_ticker"] = df["gf_ticker"].mask(df["gf_ticker"].eq(""), df["yf_ticker"])
+    df["yf_ticker"] = df["yf_ticker"].mask(df["yf_ticker"].eq(""), df["gf_ticker"])
+    df["gf_ticker"] = df["gf_ticker"].str.upper()
+    df["yf_ticker"] = df["yf_ticker"].str.upper()
+    df = df[~df["gf_ticker"].isin(
+        ["", "TICKER", "GF_TICKER", "NAN", "NONE", "<NA>"]
+    )].copy()
 
     if df.empty:
         raise RuntimeError(
             f"DataFrame vide après filtrage. Colonnes trouvées : "
-            f"{[_normalize_col(c) for c in rename_map.keys() or ['(aucune)']]}. "
+            f"{[_normalize_col(c) for c in raw_columns] or ['(aucune)']}. "
             f"Colonnes brutes du CSV : voir onglet Debug."
         )
 
@@ -520,8 +519,6 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
         if parse_num(v) == 1 or str(v).strip().upper() in ("OUI", "TRUE", "VRAI")
         else 0
     )
-    df["name"] = df["name"].apply(
-        lambda v: "" if (pd.isna(v) or str(v).strip().startswith("#")) else str(v).strip())
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = df[col].apply(parse_num)
@@ -531,19 +528,6 @@ def load_tickers(force_refresh: bool = False) -> tuple[pd.DataFrame, str]:
         df["last_update"] = None
     if "purchase_date" in df.columns:
         df["purchase_date"] = df["purchase_date"].apply(parse_sheet_date)
-
-    # yf_ticker : lu directement depuis le sheet (colonne "yf ticker")
-    # Si absent ou vide, on utilise gf_ticker comme fallback (même ticker)
-    if "yf_ticker" not in df.columns or df["yf_ticker"].isna().all():
-        df["yf_ticker"] = df["gf_ticker"].astype(str)
-    else:
-        df["yf_ticker"] = df["yf_ticker"].where(
-            df["yf_ticker"].notna() &
-            ~df["yf_ticker"].astype(str).str.strip().isin(["", "nan", "None"]),
-            other=df["gf_ticker"].astype(str)
-        )
-    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip()
-    df["yf_ticker"] = df["yf_ticker"].astype(str).str.strip().str.upper()
 
     # Détection des doublons
     dupes = df[df["gf_ticker"].duplicated(keep=False)][["gf_ticker", "yf_ticker"]].copy()
@@ -566,17 +550,18 @@ def _normalize_screening_candidates(
     registry_tickers,
 ) -> pd.DataFrame:
     """Convertit les screenings non vétos vers le format du tableau Finapp."""
-    rename_map = {
-        column: SCREENING_COL_NORMALIZED[_normalize_col(column)]
-        for column in raw_df.columns
-        if _normalize_col(column) in SCREENING_COL_NORMALIZED
-    }
-    df = raw_df.rename(columns=rename_map).copy()
+    df, alias_collisions = coalesce_alias_columns(raw_df, SCREENING_COL_NORMALIZED)
+    st.session_state["screening_alias_collisions"] = alias_collisions
     if "gf_ticker" not in df.columns or "screening_verdict" not in df.columns:
         return _empty_screening_candidates()
 
-    df = df[df["gf_ticker"].notna()].copy()
-    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip().str.upper()
+    for column in (
+        "gf_ticker", "name", "currency", "screening_verdict", "confidence",
+        "screening_key_point", "screening_prompt_version", "screening_status",
+    ):
+        if column in df.columns:
+            df[column] = df[column].map(clean_sheet_text)
+    df["gf_ticker"] = df["gf_ticker"].str.upper()
     df = df[~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])].copy()
     normalized_verdict = df["screening_verdict"].apply(_normalize_col)
     df = df[normalized_verdict.isin({"approfondir", "ecarter"})].copy()
@@ -589,13 +574,14 @@ def _normalize_screening_candidates(
     df = df[~df["gf_ticker"].isin(registry_set)].copy()
     df = df.drop_duplicates(subset=["gf_ticker"], keep="last")
 
-    for column in dict.fromkeys(SHEET_COL_NORMALIZED.values()):
+    required_columns = dict.fromkeys((
+        *SHEET_COL_NORMALIZED.values(),
+        *SCREENING_COL_NORMALIZED.values(),
+    ))
+    for column in required_columns:
         if column not in df.columns:
             df[column] = pd.NA
 
-    df["name"] = df["name"].apply(
-        lambda value: "" if pd.isna(value) else str(value).strip()
-    )
     for column in ("note", "buy", "fair", "trim", "exit", "spot_sheet"):
         df[column] = df[column].apply(parse_num)
     df["last_update"] = df["last_update"].apply(parse_sheet_date)
@@ -626,23 +612,20 @@ def load_screening_candidates(
         raise RuntimeError(
             "Impossible de lire SOL input / Screening avec la connexion Google privée."
         ) from exc
+    st.session_state["screening_sheet_errors"] = find_sheet_errors(raw_df)
     return _normalize_screening_candidates(raw_df, registry_tickers)
 
 
 def _normalize_audit_statuses(raw_df: pd.DataFrame) -> dict[str, str]:
     """Conserve le dernier statut d'audit non vide pour chaque ticker."""
-    rename_map = {
-        column: AUDIT_COL_NORMALIZED[_normalize_col(column)]
-        for column in raw_df.columns
-        if _normalize_col(column) in AUDIT_COL_NORMALIZED
-    }
-    df = raw_df.rename(columns=rename_map).copy()
+    df, alias_collisions = coalesce_alias_columns(raw_df, AUDIT_COL_NORMALIZED)
+    st.session_state["audit_alias_collisions"] = alias_collisions
     if "gf_ticker" not in df.columns or "audit_status" not in df.columns:
         return {}
 
     df = df[df["gf_ticker"].notna() & df["audit_status"].notna()].copy()
-    df["gf_ticker"] = df["gf_ticker"].astype(str).str.strip().str.upper()
-    df["audit_status"] = df["audit_status"].astype(str).str.strip()
+    df["gf_ticker"] = df["gf_ticker"].map(clean_sheet_text).str.upper()
+    df["audit_status"] = df["audit_status"].map(clean_sheet_text)
     df = df[
         ~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])
         & df["audit_status"].ne("")
@@ -659,6 +642,7 @@ def load_audit_statuses(force_refresh: bool = False) -> dict[str, str]:
         raise RuntimeError(
             "Impossible de lire SOL input / Audits avec la connexion Google privée."
         ) from exc
+    st.session_state["audit_sheet_errors"] = find_sheet_errors(raw_df)
     return _normalize_audit_statuses(raw_df)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -771,12 +755,7 @@ def _closes(data, ticker, multi):
     return pd.Series(dtype=float)
 
 def _num_or_none(v):
-    try:
-        if v is None or pd.isna(v):
-            return None
-        return float(v)
-    except Exception:
-        return None
+    return finite_float(v)
 
 def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
     symbol = str(ticker or "").strip().upper()
@@ -1032,17 +1011,7 @@ def normalize_quote_price(price, quote_currency, sheet_currency, ticker="") -> f
 
 
 def safe_float(v) -> float | None:
-    if v is None:
-        return None
-    try:
-        if pd.isna(v):
-            return None
-    except Exception:
-        pass
-    try:
-        return float(v)
-    except Exception:
-        return None
+    return finite_float(v)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Formatage HTML
@@ -1185,7 +1154,7 @@ def html_ticker_link(yf_ticker: str, gf_ticker: str) -> str:
     url = f"https://finance.yahoo.com/quote/{encoded_ticker}/" if encoded_ticker else "#"
     label = html.escape(str(gf_ticker))
     return (f'<a href="{url}" target="_blank" rel="noopener" title="Yahoo Finance" '
-            f'style="color:#93c5fd;font-family:"JetBrains Mono",monospace;'
+            f'style="color:#93c5fd;font-family:\'JetBrains Mono\',monospace;'
             f'font-size:.78rem;font-weight:500;text-decoration:none;'
             f'letter-spacing:.02em">{label}</a>')
 def html_link(url) -> str:
@@ -1197,11 +1166,13 @@ def html_link(url) -> str:
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
             f'text-decoration:none;font-family:monospace">↗</a>')
 COUNTRY_CODES = {
-    ".AS": "NL", ".BR": "BE", ".DE": "DE", ".HK": "HK",
-    ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
-    ".OL": "NO", ".PA": "FR", ".SI": "SG", ".ST": "SE", ".T": "JP",
-    ".TO": "CA", ".WA": "PL", ".AT": "GR", ".CO": "DK",
-    ".MI": "IT", ".SW": "CH", ".HE": "FI",
+    ".AS": "NL", ".AT": "GR", ".AX": "AU", ".BO": "IN",
+    ".BR": "BE", ".CO": "DK", ".DE": "DE", ".HE": "FI",
+    ".HK": "HK", ".KQ": "KR", ".KS": "KR", ".L": "GB",
+    ".MC": "ES", ".MI": "IT", ".NS": "IN", ".OL": "NO",
+    ".PA": "FR", ".SI": "SG", ".SS": "CN", ".ST": "SE",
+    ".SW": "CH", ".SZ": "CN", ".T": "JP", ".TO": "CA",
+    ".TW": "TW", ".TWO": "TW", ".WA": "PL",
 }
 COUNTRY_SUFFIXES = tuple(sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True))
 
@@ -1505,7 +1476,12 @@ def _sort_attr(value) -> str:
 def render_table(rows: list[dict], key: str,
                  display_cols: list[str] | None = None) -> None:
     if not rows:
-        st.info("Aucun titre.")
+        empty_messages = {
+            "pf": "Aucun titre en portefeuille.",
+            "wl": "Aucun titre dans la watchlist.",
+            "screening": "Aucun screening à afficher.",
+        }
+        st.info(empty_messages.get(key, "Aucun titre à afficher."))
         return
 
     cols = display_cols or DISPLAY_COLS
@@ -1654,7 +1630,7 @@ def render_table(rows: list[dict], key: str,
 })();
 </script>
 """.replace("__TABLE_ID__", json.dumps(table_id))
-    components.html(script, height=0)
+    st.iframe(script, height=1, tab_index=-1)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Rendu d'un onglet
@@ -1816,6 +1792,23 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
 .wl-stat-val.muted { font-size: 1rem; color: #8899bb; }
 .wl-stat-val.ok    { color: #22c55e; }
 .wl-stat-val.warn  { color: #fbbf24; }
+@media (max-width: 900px) {
+  .wl-topbar {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding: 8px 10px;
+  }
+  .wl-stats {
+    min-width: max-content;
+    justify-content: flex-start;
+  }
+  .wl-stat { padding: 0 11px; }
+  .wl-stat-label { letter-spacing: .06em; }
+  .stTabs [data-baseweb="tab-list"] {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+}
 
 /* ── Boutons ── */
 .stButton > button[kind="primary"] {
@@ -1868,7 +1861,7 @@ hr { border-color: #1e2535 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-components.html("""
+st.iframe("""
 <script>
 (function () {
   const parentWindow = window.parent;
@@ -1924,13 +1917,44 @@ components.html("""
   }
 })();
 </script>
-""", height=0)
+""", height=1, tab_index=-1)
 
-# ── Alertes doublons ──────────────────────────────────────────────────────────
+# ── Alertes de qualité des sources ────────────────────────────────────────────
+def warn_sheet_errors(errors: list[dict], sheet_label: str) -> None:
+    if not errors:
+        return
+    examples = ", ".join(
+        f"{item.get('ticker') or 'ligne ' + str(item.get('row'))} · {item.get('column')}"
+        for item in errors[:5]
+    )
+    suffix = f" (+{len(errors) - 5})" if len(errors) > 5 else ""
+    st.warning(
+        f"{sheet_label} contient {len(errors)} erreur(s) de formule masquée(s) : "
+        f"{examples}{suffix}."
+    )
+
+
+def warn_alias_collisions(collisions: dict, sheet_label: str) -> None:
+    if not collisions:
+        return
+    merged_headers = "; ".join(
+        f"{target} ← {', '.join(sources)}"
+        for target, sources in sorted(collisions.items())
+    )
+    st.warning(f"En-têtes synonymes fusionnés dans {sheet_label} : {merged_headers}")
+
+
 dupes = st.session_state.get("ticker_dupes", [])
 if dupes:
     tickers_en_double = sorted({d["gf_ticker"] for d in dupes})
     st.warning(f"⚠️ {len(tickers_en_double)} ticker(s) en double : {', '.join(tickers_en_double)}")
+
+warn_sheet_errors(st.session_state.get("sheet_errors", []), "Registre")
+warn_sheet_errors(st.session_state.get("screening_sheet_errors", []), "Screening")
+warn_sheet_errors(st.session_state.get("audit_sheet_errors", []), "Audits")
+warn_alias_collisions(st.session_state.get("column_alias_collisions", {}), "Registre")
+warn_alias_collisions(st.session_state.get("screening_alias_collisions", {}), "Screening")
+warn_alias_collisions(st.session_state.get("audit_alias_collisions", {}), "Audits")
 
 score_color_warning = st.session_state.get("score_color_warning")
 if score_color_warning:
@@ -2028,23 +2052,37 @@ active_yf = all_yf
 data_key = all_yf
 same_data_key = st.session_state.get("data_key") == data_key
 cached_prices = dict(st.session_state.get("prices_data", {}))
+quote_attempt_times = dict(st.session_state.get("quote_attempt_times", {}))
 fresh_prices: dict[str, dict] = {}
 
-if not all_yf:
-    prices = cached_prices
-elif same_data_key and last_action != "refresh" and cached_prices:
-    prices = cached_prices
-else:
-    price_scope = active_yf if last_action == "refresh" else all_yf
+quote_check_time = time.time()
+price_scope = (
+    active_yf
+    if last_action == "refresh"
+    else stale_quote_tickers(
+        all_yf,
+        quote_attempt_times,
+        quote_check_time,
+        REFRESH_TTL,
+    )
+)
+if price_scope:
     prices_spinner = "Actualisation des cours en temps réel…" if last_action == "refresh" else "Cours en temps réel…"
     refresh_nonce = st.session_state.get("refresh_nonce", 0) if last_action == "refresh" else 0
     with st.spinner(prices_spinner):
         fresh_prices = fetch_prices(price_scope, refresh_nonce)
-    prices = cached_prices
-    prices.update(fresh_prices)
-    prices = {ticker: prices[ticker] for ticker in all_yf if ticker in prices}
-    st.session_state["prices_data"] = prices
+    for ticker in price_scope:
+        quote_attempt_times[ticker] = quote_check_time
     st.session_state["last_fetch_ts"] = datetime.now(timezone.utc).strftime("%H:%M UTC")
+
+prices = merge_quote_cache(cached_prices, fresh_prices, all_yf)
+quote_attempt_times = {
+    ticker: quote_attempt_times[ticker]
+    for ticker in all_yf
+    if ticker in quote_attempt_times
+}
+st.session_state["prices_data"] = prices
+st.session_state["quote_attempt_times"] = quote_attempt_times
 
 # Le endpoint chart fournit généralement le nom avec le prix.
 names = dict(st.session_state.get("names_data", {}))
@@ -2082,6 +2120,16 @@ st.session_state["data_key"] = data_key
 last_ts = st.session_state.get("last_fetch_ts", "—")
 
 ok = sum(1 for t in all_yf if prices.get(t, {}).get("price") is not None)
+stale_price_tickers = [
+    ticker for ticker in all_yf if prices.get(ticker, {}).get("_stale", False)
+]
+if stale_price_tickers:
+    preview = ", ".join(stale_price_tickers[:8])
+    suffix = f" (+{len(stale_price_tickers) - 8})" if len(stale_price_tickers) > 8 else ""
+    st.warning(
+        "Yahoo n'a pas répondu pour certaines cotations : anciennes valeurs conservées "
+        f"pour {preview}{suffix}."
+    )
 
 # Mise à jour du topbar avec les prix récupérés
 render_topbar(len(pf_df), non_portfolio_count, last_ts, ok=ok, total=len(all_yf))
