@@ -1201,7 +1201,7 @@ COUNTRY_CODES = {
     ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
     ".OL": "NO", ".PA": "FR", ".SI": "SG", ".ST": "SE", ".T": "JP",
     ".TO": "CA", ".WA": "PL", ".AT": "GR", ".CO": "DK",
-    ".MI": "IT", ".SW": "CH",
+    ".MI": "IT", ".SW": "CH", ".HE": "FI",
 }
 COUNTRY_SUFFIXES = tuple(sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True))
 
