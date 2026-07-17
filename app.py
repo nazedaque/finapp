@@ -944,6 +944,64 @@ def html_screening_zone(price, buy, fair) -> tuple[str, int]:
     )
 
 
+def screening_confidence_rank(value) -> int:
+    """Rang de confiance utilisé uniquement pour départager les screenings."""
+    normalized = _normalize_col(value).replace("-", " ")
+    if "tres haute" in normalized or "tres elevee" in normalized:
+        return 5
+    if "moyenne haute" in normalized:
+        return 4
+    if "haute" in normalized or "elevee" in normalized:
+        return 4
+    if "moyenne basse" in normalized:
+        return 2
+    if "moyenne" in normalized:
+        return 3
+    if "basse" in normalized or "faible" in normalized:
+        return 1
+    return 0
+
+
+def screening_priority(
+        zone_rank: int,
+        quality,
+        price,
+        fair,
+        confidence,
+        screening_date) -> int:
+    """Clé de tri : zone, qualité, proximité Fair, confiance, date."""
+    quality_value = safe_float(quality)
+    quality_rank = round(max(0.0, min(100.0, quality_value or 0.0)))
+
+    proximity_rank = 0
+    price_value = safe_float(price)
+    fair_value = safe_float(fair)
+    if (
+        zone_rank == 0
+        and price_value is not None
+        and fair_value is not None
+        and fair_value > 0
+    ):
+        gap_ratio = max(0.0, (price_value - fair_value) / fair_value)
+        proximity_rank = max(0, 10_000 - min(10_000, round(gap_ratio * 10_000)))
+
+    confidence_rank = screening_confidence_rank(confidence)
+    date_rank = (
+        screening_date.toordinal()
+        if isinstance(screening_date, date) and not pd.isna(screening_date)
+        else 0
+    )
+
+    # Pondérations de tri lexicographiques, toutes sous la précision entière JS.
+    return int(
+        zone_rank * 1_000_000_000_000_000
+        + quality_rank * 1_000_000_000_000
+        + proximity_rank * 10_000_000
+        + confidence_rank * 1_000_000
+        + date_rank
+    )
+
+
 def _canonical_currency(value) -> str:
     """Normalise les codes sans confondre les livres (GBP) et les pence (GBX/GBp)."""
     raw = "" if value is None else str(value).strip()
@@ -1213,6 +1271,18 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         screening_zone_html, screening_zone_rank = (
             html_screening_zone(price, buy, fair) if screened_only else ("", 0)
         )
+        screening_sort_score = (
+            screening_priority(
+                screening_zone_rank,
+                quality,
+                price,
+                fair,
+                r.get("confidence"),
+                r.get("last_update"),
+            )
+            if screened_only
+            else score
+        )
         audit_html, audit_rank = html_audit(
             r.get("_audit_status"),
             underwritten,
@@ -1227,7 +1297,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         flagged = bool(r.get("flagged", False))
 
         rows.append({
-            "_score":        screening_zone_rank if screened_only else score,
+            "_score":        screening_sort_score,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
             "_upside":       upside,
@@ -1251,7 +1321,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Prix": price,
                 "Upside": upside,
                 "Var %": chg,
-                "Score": screening_zone_rank if screened_only else score,
+                "Score": screening_sort_score,
                 "Industrie": industry,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
@@ -1456,6 +1526,7 @@ def render_table(rows: list[dict], key: str,
         initial_sort = "descending" if column == "Score" else "none"
         sort_attrs = (
             f' data-column="{idx}" data-sort-type="{SORTABLE_COLUMNS[column]}"'
+            f' data-default-direction="{-1 if column == "Score" else 1}"'
             f' aria-sort="{initial_sort}" tabindex="0" role="button"'
             if sortable else ""
         )
@@ -1549,7 +1620,9 @@ def render_table(rows: list[dict], key: str,
     function sortBy(header) {
       const column = Number(header.dataset.column);
       const type = header.dataset.sortType;
-      direction = activeColumn === column ? -direction : 1;
+      direction = activeColumn === column
+        ? -direction
+        : Number(header.dataset.defaultDirection || 1);
       activeColumn = column;
 
       const rows = Array.from(tbody.rows);
