@@ -745,7 +745,7 @@ def _num_or_none(v):
 
 def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
     symbol = str(ticker or "").strip().upper()
-    empty = {"price": None, "chg": None, "name": "", "error": ""}
+    empty = {"price": None, "chg": None, "name": "", "currency": "", "error": ""}
     if not symbol:
         return symbol, empty
 
@@ -763,7 +763,14 @@ def _fetch_chart_quote(ticker: str) -> tuple[str, dict]:
             prev = _num_or_none(meta.get("chartPreviousClose") or meta.get("previousClose"))
             chg = (price - prev) / prev * 100 if price is not None and prev else None
             name = str(meta.get("shortName") or meta.get("longName") or "").strip()
-            return symbol, {"price": price, "chg": chg, "name": name, "error": ""}
+            currency = str(meta.get("currency") or "").strip()
+            return symbol, {
+                "price": price,
+                "chg": chg,
+                "name": name,
+                "currency": currency,
+                "error": "",
+            }
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             retryable = not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
@@ -856,6 +863,7 @@ def fetch_prices(yf_tickers: tuple[str, ...], refresh_nonce: int = 0) -> dict[st
                 "price": price,
                 "chg": chg,
                 "name": quote.get("name", ""),
+                "currency": quote.get("currency", ""),
                 "error": quote.get("error", ""),
             }
         if i + 1 < (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE:
@@ -872,6 +880,35 @@ def compute_upside(price, fair, trim) -> float | None:
         target = (float(fair) + float(trim)) / 2
         return (target - float(price)) / float(price) * 100
     except Exception: return None
+
+
+def _canonical_currency(value) -> str:
+    """Normalise les codes sans confondre les livres (GBP) et les pence (GBX/GBp)."""
+    raw = "" if value is None else str(value).strip()
+    if raw == "GBp" or raw.upper() == "GBX":
+        return "GBX"
+    return raw.upper()
+
+
+def normalize_quote_price(price, quote_currency, sheet_currency, ticker="") -> float | None:
+    """Convertit le cours Yahoo dans l'unité monétaire utilisée par le Sheet."""
+    value = safe_float(price)
+    if value is None:
+        return None
+
+    target_currency = _canonical_currency(sheet_currency)
+    source_currency = _canonical_currency(quote_currency)
+    if not source_currency and str(ticker or "").strip().upper().endswith(".L"):
+        # Le chart Yahoo omet parfois la devise en fallback. Pour Londres, on ne
+        # déduit les pence que si le Sheet attend explicitement GBP ou GBX.
+        if target_currency in {"GBP", "GBX"}:
+            source_currency = "GBX"
+
+    if source_currency == "GBX" and target_currency == "GBP":
+        return value / 100
+    if source_currency == "GBP" and target_currency == "GBX":
+        return value * 100
+    return value
 
 
 def safe_float(v) -> float | None:
@@ -1057,8 +1094,15 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         yf_s = str(yf_t).strip().upper() if pd.notna(yf_t) else ""
         q = prices.get(yf_s, {})
 
-        price = q.get("price")
+        yahoo_price = q.get("price")
+        price = normalize_quote_price(
+            yahoo_price,
+            q.get("currency"),
+            r.get("currency"),
+            yf_s,
+        )
         if price is None and pd.notna(r.get("spot_sheet")):
+            # Le cours du Sheet est déjà exprimé dans la devise de la ligne.
             price = r.get("spot_sheet")
         chg = q.get("chg")
         sheet_name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
