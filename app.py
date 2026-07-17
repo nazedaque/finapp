@@ -325,6 +325,7 @@ SHEET_COL_NORMALIZED = {
     "date comptes": "accounts_date",
     "version prompt": "prompt_version",
     "audit": "verif",
+    "audit impact": "audit_impact",
     "action suivante": "next_action",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
@@ -1030,15 +1031,30 @@ def fmt_verif(v) -> str:
     return value
 
 
-def html_audit(v, underwritten: bool, screening_key_point=None) -> tuple[str, int]:
+def html_audit(
+        v,
+        underwritten: bool,
+        screening_key_point=None,
+        audit_impact=None,
+        analytic_complete: bool = True,
+        registry_audit=None) -> tuple[str, int]:
     value = fmt_verif(v)
     normalized = _normalize_col(value)
-    if normalized == "non auditable":
+    registry_value = fmt_verif(registry_audit)
+    registry_normalized = _normalize_col(registry_value)
+    impact = _normalize_col(fmt_verif(audit_impact))
+
+    if underwritten and impact == "material":
+        if analytic_complete:
+            color, label, rank = "#facc15", "Actualisation matérielle — nouvel audit requis", 1
+        else:
+            color, label, rank = "#ef4444", "Non auditable / décision suspendue", -1
+    elif normalized == "non auditable" or registry_normalized == "non auditable":
         color, label, rank = "#ef4444", "Non auditable", -1
         if value:
             label += f" — {value}"
     elif value:
-        color, label, rank = "#22c55e", "Underwrité et audité", 2
+        color, label, rank = "#22c55e", "Audité — aucun changement matériel depuis", 2
         label += f" — {value}"
     elif underwritten:
         color, label, rank = "#facc15", "Underwrité mais non audité", 1
@@ -1177,10 +1193,16 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         underwritten = not screened_only and (
             bool(prompt_version) or sum(value is not None for value in target_values) >= 3
         )
+        analytic_complete = quality is not None and all(
+            value is not None for value in target_values
+        )
         audit_html, audit_rank = html_audit(
             r.get("_audit_status"),
             underwritten,
             r.get("screening_key_point"),
+            r.get("audit_impact"),
+            analytic_complete,
+            r.get("verif"),
         )
         days = holding_days(r.get("purchase_date"))
         gf = str(r["gf_ticker"])
