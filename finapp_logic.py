@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -56,11 +57,11 @@ SCREENING_NUMERIC_COLUMNS = ("spot_sheet", "note", "buy", "fair", "trim", "exit"
 COUNTRY_CODES = {
     ".AS": "NL", ".AT": "GR", ".AX": "AU", ".BO": "IN",
     ".BR": "BE", ".CO": "DK", ".DE": "DE", ".HE": "FI", ".HK": "HK",
-    ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
+    ".IL": "GB", ".KQ": "KR", ".KS": "KR", ".L": "GB", ".MC": "ES",
     ".MI": "IT", ".NS": "IN", ".OL": "NO", ".PA": "FR",
     ".SI": "SG", ".SS": "CN", ".ST": "SE", ".SW": "CH",
     ".SZ": "CN", ".T": "JP", ".TO": "CA", ".TW": "TW",
-    ".TWO": "TW", ".WA": "PL",
+    ".TWO": "TW", ".V": "CA", ".VI": "AT", ".VS": "LT", ".WA": "PL",
 }
 COUNTRY_SUFFIXES = tuple(
     sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True)
@@ -78,6 +79,35 @@ def configure_gsheets_timeout(connection, timeout: tuple[int, int]) -> bool:
         return True
     except Exception:
         return False
+
+
+def parse_sheet_date(value):
+    """Normalise une date texte, Python ou un numéro de série Google Sheets."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        try:
+            serial = float(value)
+            if 1 <= serial <= 100_000:
+                return (pd.Timestamp("1899-12-30") + pd.to_timedelta(serial, unit="D")).date()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    text = str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", text):
+        parsed = pd.to_datetime(text, format="ISO8601", errors="coerce")
+    else:
+        parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
+    return None if pd.isna(parsed) else parsed.date()
 
 
 def finite_float(value) -> float | None:

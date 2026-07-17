@@ -1,5 +1,6 @@
 import math
 import unittest
+import warnings
 from datetime import date
 
 import pandas as pd
@@ -17,6 +18,7 @@ from finapp_logic import (
     normalize_screening_frame,
     normalize_portif,
     parse_number,
+    parse_sheet_date,
     resolve_score,
     safe_date_ordinal,
     stale_quote_tickers,
@@ -348,11 +350,28 @@ class GeographicClassificationTests(unittest.TestCase):
             "399001.SZ": "CN",
             "BHP.AX": "AU",
             "NOKIA.HE": "FI",
+            "HSBK.IL": "GB",
+            "TOI.V": "CA",
+            "STR.VI": "AT",
+            "RSU1L.VS": "LT",
             "AAPL": "US",
         }
         for ticker, code in expected.items():
             with self.subTest(ticker=ticker):
                 self.assertEqual(country_code(ticker), code)
+
+
+class SheetDateParsingTests(unittest.TestCase):
+    def test_iso_dates_do_not_emit_dayfirst_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parsed = parse_sheet_date("2026-07-17")
+
+        self.assertEqual(parsed, date(2026, 7, 17))
+        self.assertFalse(any("dayfirst" in str(item.message) for item in caught))
+
+    def test_french_dates_keep_day_first_semantics(self):
+        self.assertEqual(parse_sheet_date("17/07/2026"), date(2026, 7, 17))
 
 if __name__ == "__main__":
     unittest.main()

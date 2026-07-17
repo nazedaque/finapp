@@ -20,10 +20,12 @@ from finapp_logic import (
     clean_sheet_text,
     coalesce_alias_columns,
     configure_gsheets_timeout,
+    country_code,
     finite_float,
     find_sheet_errors,
     merge_quote_cache,
     parse_number,
+    parse_sheet_date,
     stale_quote_tickers,
 )
 
@@ -256,30 +258,6 @@ SORTABLE_COLUMNS = {
 
 def parse_num(v) -> float | None:
     return parse_number(v)
-
-
-def parse_sheet_date(v):
-    """Normalise une date texte, Python ou un numéro de série Google Sheets."""
-    if v is None:
-        return None
-    try:
-        if pd.isna(v):
-            return None
-    except (TypeError, ValueError):
-        pass
-    if isinstance(v, datetime):
-        return v.date()
-    if isinstance(v, date):
-        return v
-    if not isinstance(v, str):
-        try:
-            serial = float(v)
-            if 1 <= serial <= 100_000:
-                return (pd.Timestamp("1899-12-30") + pd.to_timedelta(serial, unit="D")).date()
-        except (TypeError, ValueError, OverflowError):
-            return None
-    parsed = pd.to_datetime(v, dayfirst=True, errors="coerce")
-    return None if pd.isna(parsed) else parsed.date()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1172,25 +1150,6 @@ def html_link(url) -> str:
     return (f'<a href="{safe_url}" target="_blank" rel="noopener" title="Analyse ChatGPT" '
             f'style="color:#93c5fd;font-size:.78rem;font-weight:600;'
             f'text-decoration:none;font-family:monospace">↗</a>')
-COUNTRY_CODES = {
-    ".AS": "NL", ".AT": "GR", ".AX": "AU", ".BO": "IN",
-    ".BR": "BE", ".CO": "DK", ".DE": "DE", ".HE": "FI",
-    ".HK": "HK", ".KQ": "KR", ".KS": "KR", ".L": "GB",
-    ".MC": "ES", ".MI": "IT", ".NS": "IN", ".OL": "NO",
-    ".PA": "FR", ".SI": "SG", ".SS": "CN", ".ST": "SE",
-    ".SW": "CH", ".SZ": "CN", ".T": "JP", ".TO": "CA",
-    ".TW": "TW", ".TWO": "TW", ".WA": "PL",
-}
-COUNTRY_SUFFIXES = tuple(sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True))
-
-
-def country_code(ticker: str) -> str:
-    t = str(ticker or "").upper().strip()
-    for suffix, code in COUNTRY_SUFFIXES:
-        if t.endswith(suffix):
-            return code
-    return "US" if t else ""
-
 def html_country_flag(ticker: str) -> str:
     code = country_code(ticker)
     if not code:
