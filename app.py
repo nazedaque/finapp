@@ -930,6 +930,19 @@ def compute_upside(price, fair, trim) -> float | None:
     except Exception: return None
 
 
+def is_buy_or_strong_buy(price, buy, fair) -> bool:
+    """Vrai lorsque le cours se situe en zone Strong Buy ou Buy."""
+    price_value = safe_float(price)
+    buy_value = safe_float(buy)
+    fair_value = safe_float(fair)
+    return (
+        price_value is not None
+        and buy_value is not None
+        and fair_value is not None
+        and price_value <= fair_value
+    )
+
+
 def _canonical_currency(value) -> str:
     """Normalise les codes sans confondre les livres (GBP) et les pence (GBX/GBp)."""
     raw = "" if value is None else str(value).strip()
@@ -1219,6 +1232,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "_ticker":       gf,
             "_name":         name,
             "_flagged":      flagged,
+            "_buy_zone":     screened_only and is_buy_or_strong_buy(price, buy, fair),
             "_sort": {
                 "MAJ": (
                     r.get("last_update").toordinal()
@@ -1361,6 +1375,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
+.wl-buy-zone td:not(.score-col) { font-weight: 700; }
 .wl-country-flag {
   display: inline-block;
   width: 15px;
@@ -1435,7 +1450,12 @@ def render_table(rows: list[dict], key: str,
 
     trs = []
     for row in rows:
-        row_class = "wl-flagged" if row["_flagged"] else ""
+        row_classes = []
+        if row["_flagged"]:
+            row_classes.append("wl-flagged")
+        if key == "screening" and row.get("_buy_zone"):
+            row_classes.append("wl-buy-zone")
+        row_class = " ".join(row_classes)
         td_parts = []
         for column in cols:
             classes = " ".join(filter(None, (
