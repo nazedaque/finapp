@@ -464,24 +464,11 @@ def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
 
 
 def _read_screening_sheet(ttl: str | int = "5m") -> pd.DataFrame:
-    """Lit les valeurs et couleurs du score provisoire de Screening."""
+    """Lit les valeurs de Screening ; aucun Score global n'y est disponible."""
     connection = _private_sheet_connection()
     df = connection.read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
-    try:
-        df["_score_sheet_color"] = _read_sheet_column_colors(
-            connection,
-            df.columns,
-            len(df),
-            SCREENING_SHEET_NAME,
-            SCREENING_COL_NORMALIZED,
-            "note",
-        )
-        st.session_state.pop("screening_score_color_warning", None)
-    except Exception:
-        df["_score_sheet_color"] = None
-        st.session_state["screening_score_color_warning"] = (
-            "Les couleurs du score provisoire n'ont pas pu être relues dans le Google Sheet."
-        )
+    df["_score_sheet_color"] = None
+    st.session_state.pop("screening_score_color_warning", None)
     return df
 
 
@@ -613,8 +600,8 @@ def _normalize_screening_candidates(
         df[column] = df[column].apply(parse_num)
     df["last_update"] = df["last_update"].apply(parse_sheet_date)
 
-    # Le score provisoire du screening doit aussi alimenter la colonne Score.
-    df["score_sheet"] = df["note"]
+    # Screening ne produit pas de Score global : la colonne Score affichera la zone d'achat.
+    df["score_sheet"] = pd.NA
 
     df["yf_ticker"] = df["gf_ticker"]
     df["portif"] = 0
@@ -930,8 +917,8 @@ def compute_upside(price, fair, trim) -> float | None:
     except Exception: return None
 
 
-def html_screening_action(price, buy, fair) -> tuple[str, int]:
-    """Symbole d'action underwriting pour les titres uniquement screenés."""
+def html_screening_zone(price, buy, fair) -> tuple[str, int]:
+    """Libellé Buy / Strong Buy destiné à la colonne Score de Screenés."""
     price_value = safe_float(price)
     buy_value = safe_float(buy)
     fair_value = safe_float(fair)
@@ -944,18 +931,15 @@ def html_screening_action(price, buy, fair) -> tuple[str, int]:
         return "—", 0
 
     if price_value <= buy_value:
-        symbol = "◆"
-        label = "Strong Buy — underwriting à lancer"
+        label = "Strong Buy"
         rank = 2
     else:
-        symbol = "◇"
-        label = "Buy — underwriting à envisager"
+        label = "Buy"
         rank = 1
 
     safe_label = html.escape(label, quote=True)
     return (
-        f'<span class="screening-action" title="{safe_label}" '
-        f'role="img" aria-label="{safe_label}">{symbol}</span>',
+        f'<span class="screening-zone-label" title="{safe_label}">{safe_label}</span>',
         rank,
     )
 
@@ -1226,8 +1210,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         analytic_complete = quality is not None and all(
             value is not None for value in target_values
         )
-        screening_action_html, screening_action_rank = (
-            html_screening_action(price, buy, fair) if screened_only else ("", 0)
+        screening_zone_html, screening_zone_rank = (
+            html_screening_zone(price, buy, fair) if screened_only else ("", 0)
         )
         audit_html, audit_rank = html_audit(
             r.get("_audit_status"),
@@ -1243,7 +1227,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         flagged = bool(r.get("flagged", False))
 
         rows.append({
-            "_score":        score,
+            "_score":        screening_zone_rank if screened_only else score,
             "_chg":          chg,
             "_maj":          r.get("last_update"),
             "_upside":       upside,
@@ -1259,7 +1243,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                     else None
                 ),
                 "Audit": audit_rank,
-                "JRS": screening_action_rank if screened_only else days,
+                "JRS": None if screened_only else days,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
                 "Société": name_u,
@@ -1267,13 +1251,13 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Prix": price,
                 "Upside": upside,
                 "Var %": chg,
-                "Score": score,
+                "Score": screening_zone_rank if screened_only else score,
                 "Industrie": industry,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
             "Audit":    audit_html,
             "JRS":      (
-                screening_action_html
+                "—"
                 if screened_only
                 else fmt_holding_days(r.get("purchase_date"), holding_required)
             ),
@@ -1284,7 +1268,11 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Prix":     fmt_price(price),
             "Var %":    html_var(chg),
             "Upside":   html_upside(upside),
-            "Score":    html_score_cell(score, r.get("_score_sheet_color")),
+            "Score":    (
+                screening_zone_html
+                if screened_only
+                else html_score_cell(score, r.get("_score_sheet_color"))
+            ),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
             "Trim":     fmt_target(trim, hide_target_decimals),
@@ -1398,12 +1386,12 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-table tbody tr:hover td { background: rgba(59,130,246,.08) !important; }
 .wl-flagged td { background: #2d1f5e !important; }
 .wl-flagged:hover td { background: #3a2875 !important; }
-.screening-action {
+.screening-zone-label {
   display: inline-block;
-  font-size: 13px;
+  font-size: .63rem;
   font-weight: 600;
   line-height: 1;
-  cursor: help;
+  white-space: nowrap;
 }
 .wl-country-flag {
   display: inline-block;
