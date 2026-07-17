@@ -60,10 +60,9 @@ jobs:
           --fail
           --silent
           --show-error
-          --location
           --retry 3
           --retry-all-errors
           --retry-delay 5
           --max-time 30
-          https://pvqbzhsaueniyczathnvm6.streamlit.app/
+          https://pvqbzhsaueniyczathnvm6.streamlit.app/_stcore/health
           > /dev/null
