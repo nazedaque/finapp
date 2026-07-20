@@ -35,7 +35,7 @@ LOGGER = logging.getLogger(__name__)
 # Config
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.set_page_config(page_title="Finapp SOL", page_icon=None, layout="wide",
+st.set_page_config(page_title="Finapp SOL", page_icon="assets/favicon-champion.png", layout="wide",
                    initial_sidebar_state="collapsed")
 
 APP_TITLE         = "Finapp SOL"
@@ -534,7 +534,7 @@ def _normalize_screening_candidates(
     raw_df: pd.DataFrame,
     registry_tickers,
 ) -> pd.DataFrame:
-    """Convertit les screenings non vétos vers le format du tableau Finapp."""
+    """Convertit les screenings APPROFONDIR vers le format du tableau Finapp."""
     df, alias_collisions = coalesce_alias_columns(raw_df, SCREENING_COL_NORMALIZED)
     st.session_state["screening_alias_collisions"] = alias_collisions
     if "gf_ticker" not in df.columns or "screening_verdict" not in df.columns:
@@ -549,7 +549,7 @@ def _normalize_screening_candidates(
     df["gf_ticker"] = df["gf_ticker"].str.upper()
     df = df[~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])].copy()
     normalized_verdict = df["screening_verdict"].apply(_normalize_col)
-    df = df[normalized_verdict.isin({"approfondir", "ecarter"})].copy()
+    df = df[normalized_verdict == "approfondir"].copy()
 
     registry_set = {
         str(ticker).strip().upper()
@@ -590,7 +590,7 @@ def load_screening_candidates(
     registry_tickers,
     force_refresh: bool = False,
 ) -> pd.DataFrame:
-    """Charge les titres APPROFONDIR ou ÉCARTER encore absents du Registre."""
+    """Charge les titres APPROFONDIR encore absents du Registre."""
     try:
         raw_df = _read_screening_sheet(ttl=0 if force_refresh else "5m")
     except Exception as exc:
