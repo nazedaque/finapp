@@ -491,31 +491,3 @@ def compute_score(ratio, note) -> float | None:
     if ratio_value is None or note_value is None:
         return None
     return (0.6 * ratio_value + 0.4 * note_value / 100) * 100
-
-
-def score_gradient_color(value) -> str | None:
-    """Reproduit le dégradé du Sheet pour un score calculé en direct."""
-    score = finite_float(value)
-    if score is None:
-        return None
-    stops = (
-        (30.0, (255, 0, 0)),
-        (50.0, (255, 217, 102)),
-        (80.0, (106, 168, 79)),
-    )
-    if score <= stops[0][0]:
-        rgb = stops[0][1]
-    elif score >= stops[-1][0]:
-        rgb = stops[-1][1]
-    else:
-        lower, upper = next(
-            (left, right)
-            for left, right in zip(stops, stops[1:])
-            if left[0] <= score <= right[0]
-        )
-        ratio = (score - lower[0]) / (upper[0] - lower[0])
-        rgb = tuple(
-            round(start + ratio * (end - start))
-            for start, end in zip(lower[1], upper[1])
-        )
-    return "#{:02x}{:02x}{:02x}".format(*rgb)

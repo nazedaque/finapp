@@ -62,6 +62,26 @@ class AppStructureTests(unittest.TestCase):
         )
         self.assertIn("Score global calculé avec le cours Yahoo", self.source)
 
+    def test_live_score_colors_match_the_sheet_gradient_stops(self):
+        tree = ast.parse(self.source)
+        function = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "score_gradient_color"
+        )
+        namespace = {
+            "safe_float": lambda value: None if value is None else float(value),
+        }
+        module = ast.Module(body=[function], type_ignores=[])
+        exec(compile(ast.fix_missing_locations(module), "app.py", "exec"), namespace)
+
+        color = namespace["score_gradient_color"]
+        self.assertEqual(color(20), "#ff0000")
+        self.assertEqual(color(30), "#ff0000")
+        self.assertEqual(color(50), "#ffd966")
+        self.assertEqual(color(80), "#6aa84f")
+        self.assertEqual(color(95), "#6aa84f")
+        self.assertIsNone(color(None))
+
     def test_legacy_asia_routing_is_absent(self):
         self.assertNotIn("Asie", self.source)
         self.assertNotIn("asia_", self.source)
