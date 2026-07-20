@@ -13,6 +13,7 @@ from finapp_logic import (
     compute_score,
     country_code,
     find_sheet_errors,
+    is_suspended_underwriting,
     merge_quote_cache,
     normalize_register_frame,
     normalize_screening_frame,
@@ -354,11 +355,43 @@ class GeographicClassificationTests(unittest.TestCase):
             "TOI.V": "CA",
             "STR.VI": "AT",
             "RSU1L.VS": "LT",
+            "GPP.WA": "PL",
+            "4MS.WS": "PL",
             "AAPL": "US",
         }
         for ticker, code in expected.items():
             with self.subTest(ticker=ticker):
                 self.assertEqual(country_code(ticker), code)
+
+
+class WatchlistEligibilityTests(unittest.TestCase):
+    def test_vetoed_underwriting_is_suspended(self):
+        row = {
+            "prompt_version": "SOL.8b-X",
+            "next_action": "Suspendre",
+            "note": None,
+            "score_sheet": None,
+            "buy": None,
+            "fair": None,
+            "trim": None,
+            "exit": None,
+        }
+
+        self.assertTrue(is_suspended_underwriting(row))
+
+    def test_valid_underwriting_is_not_suspended(self):
+        row = {
+            "prompt_version": "SOL.8b-X",
+            "next_action": "Lancer l’audit",
+            "note": 67,
+            "score_sheet": 64,
+            "buy": 36,
+            "fair": 49,
+            "trim": 57,
+            "exit": 66,
+        }
+
+        self.assertFalse(is_suspended_underwriting(row))
 
 
 class SheetDateParsingTests(unittest.TestCase):

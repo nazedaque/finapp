@@ -23,6 +23,7 @@ from finapp_logic import (
     country_code,
     finite_float,
     find_sheet_errors,
+    is_suspended_underwriting,
     merge_quote_cache,
     parse_number,
     parse_sheet_date,
@@ -1687,8 +1688,11 @@ tickers_df["_audit_status"] = (
 )
 screening_df["_audit_status"] = ""
 
+suspended_underwriting_mask = tickers_df.apply(is_suspended_underwriting, axis=1)
 pf_df = tickers_df[tickers_df["portif"] == 1].copy()
-wl_df = tickers_df[tickers_df["portif"] != 1].copy()
+wl_df = tickers_df[
+    (tickers_df["portif"] != 1) & ~suspended_underwriting_mask
+].copy()
 to_analyze_df = screening_df.copy()
 non_portfolio_count = len(wl_df) + len(to_analyze_df)
 

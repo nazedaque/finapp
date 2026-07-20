@@ -61,7 +61,8 @@ COUNTRY_CODES = {
     ".MI": "IT", ".NS": "IN", ".OL": "NO", ".PA": "FR",
     ".SI": "SG", ".SS": "CN", ".ST": "SE", ".SW": "CH",
     ".SZ": "CN", ".T": "JP", ".TO": "CA", ".TW": "TW",
-    ".TWO": "TW", ".V": "CA", ".VI": "AT", ".VS": "LT", ".WA": "PL",
+    ".TWO": "TW", ".V": "CA", ".VI": "AT", ".VS": "LT",
+    ".WA": "PL", ".WS": "PL",
 }
 COUNTRY_SUFFIXES = tuple(
     sorted(COUNTRY_CODES.items(), key=lambda item: len(item[0]), reverse=True)
@@ -453,6 +454,16 @@ def normalize_portif(value) -> int:
 
     normalized = str(value).strip().casefold()
     return 1 if normalized in {"true", "vrai", "yes", "oui"} else 0
+
+
+def is_suspended_underwriting(row) -> bool:
+    """Repère un underwriting suspendu sans score ni zones exploitables."""
+    if not clean_sheet_text(row.get("prompt_version")):
+        return False
+    if normalize_column_name(row.get("next_action")) != "suspendre":
+        return False
+    analytic_fields = ("note", "score_sheet", "buy", "fair", "trim", "exit")
+    return all(finite_float(row.get(field)) is None for field in analytic_fields)
 
 
 def country_code(ticker: str) -> str:
