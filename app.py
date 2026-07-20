@@ -19,6 +19,8 @@ import yfinance as yf
 from finapp_logic import (
     clean_sheet_text,
     coalesce_alias_columns,
+    compute_ratio,
+    compute_score,
     configure_gsheets_timeout,
     country_code,
     finite_float,
@@ -27,6 +29,7 @@ from finapp_logic import (
     merge_quote_cache,
     parse_number,
     parse_sheet_date,
+    score_gradient_color,
     stale_quote_tickers,
 )
 
@@ -355,102 +358,16 @@ def _private_sheet_connection():
     return connection
 
 
-def _column_letter(index: int) -> str:
-    letters = ""
-    while index:
-        index, remainder = divmod(index - 1, 26)
-        letters = chr(65 + remainder) + letters
-    return letters
-
-
-def _effective_background_hex(cell: dict) -> str | None:
-    effective_format = cell.get("effectiveFormat", {})
-    rgb = effective_format.get("backgroundColorStyle", {}).get("rgbColor")
-    if not rgb:
-        rgb = effective_format.get("backgroundColor")
-    if not rgb:
-        return None
-    channels = tuple(round(float(rgb.get(name, 0)) * 255) for name in ("red", "green", "blue"))
-    return "#{:02x}{:02x}{:02x}".format(*channels)
-
-
-def _read_sheet_column_colors(
-    connection,
-    source_columns,
-    row_count: int,
-    worksheet_name: str,
-    normalized_columns: dict[str, str],
-    target_column: str,
-) -> list[str | None]:
-    """Lit les couleurs effectives d'une colonne directement dans le Sheet."""
-    source_column = next(
-        (
-            index
-            for index, column in enumerate(source_columns, start=1)
-            if normalized_columns.get(_normalize_col(column)) == target_column
-        ),
-        None,
-    )
-    if source_column is None or row_count <= 0:
-        return [None] * row_count
-
-    raw_client = getattr(connection.client, "_client", None)
-    if raw_client is None:
-        raise RuntimeError("La connexion Google n'expose pas les formats de cellules.")
-
-    column = _column_letter(source_column)
-    spreadsheet = raw_client.open_by_key(SHEET_ID)
-    metadata = spreadsheet.fetch_sheet_metadata(params={
-        "includeGridData": True,
-        "ranges": [f"'{worksheet_name}'!{column}2:{column}{row_count + 1}"],
-    })
-    sheet = next(
-        item for item in metadata.get("sheets", [])
-        if item.get("properties", {}).get("title") == worksheet_name
-    )
-    data = sheet.get("data", [])
-    row_data = data[0].get("rowData", []) if data else []
-    colors: list[str | None] = []
-    for index in range(row_count):
-        values = row_data[index].get("values", []) if index < len(row_data) else []
-        colors.append(_effective_background_hex(values[0]) if values else None)
-    return colors
-
-
-def _read_score_colors(connection, source_columns, row_count: int) -> list[str | None]:
-    """Lit les couleurs de Score dans le Registre."""
-    return _read_sheet_column_colors(
-        connection,
-        source_columns,
-        row_count,
-        SHEET_NAME,
-        SHEET_COL_NORMALIZED,
-        "score_sheet",
-    )
-
-
 def _read_private_sheet(ttl: str | int = "5m") -> pd.DataFrame:
-    """Lit les valeurs et couleurs effectives de Registre via Google."""
+    """Lit les valeurs du Registre via Google."""
     connection = _private_sheet_connection()
-    df = connection.read(worksheet=SHEET_NAME, ttl=ttl)
-    try:
-        df["_score_sheet_color"] = _read_score_colors(connection, df.columns, len(df))
-        st.session_state.pop("score_color_warning", None)
-    except Exception:
-        df["_score_sheet_color"] = None
-        st.session_state["score_color_warning"] = (
-            "Les couleurs du Score n'ont pas pu être relues dans le Google Sheet."
-        )
-    return df
+    return connection.read(worksheet=SHEET_NAME, ttl=ttl)
 
 
 def _read_screening_sheet(ttl: str | int = "5m") -> pd.DataFrame:
     """Lit les valeurs de Screening ; aucun Score global n'y est disponible."""
     connection = _private_sheet_connection()
-    df = connection.read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
-    df["_score_sheet_color"] = None
-    st.session_state.pop("screening_score_color_warning", None)
-    return df
+    return connection.read(worksheet=SCREENING_SHEET_NAME, ttl=ttl)
 
 
 def _read_audits_sheet(ttl: str | int = "5m") -> pd.DataFrame:
@@ -526,7 +443,7 @@ def _empty_screening_candidates() -> pd.DataFrame:
     columns = list(dict.fromkeys(SHEET_COL_NORMALIZED.values()))
     columns.extend([
         "screening_verdict", "screening_status", "screening_key_point",
-        "screened_only", "_score_sheet_color",
+        "screened_only",
     ])
     return pd.DataFrame(columns=columns)
 
@@ -582,8 +499,6 @@ def _normalize_screening_candidates(
     df["verif_display"] = ""
     df["flagged"] = False
     df["screened_only"] = True
-    if "_score_sheet_color" not in df.columns:
-        df["_score_sheet_color"] = None
     return df.reset_index(drop=True)
 
 
@@ -1099,19 +1014,17 @@ def html_audit(
     return light, rank
 
 
-def html_score_cell(v, sheet_color) -> str:
+def html_score_cell(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     try:
         score = max(0.0, min(100.0, float(v)))
     except Exception:
         return "—"
-    color = str(sheet_color) if isinstance(sheet_color, str) and re.fullmatch(
-        r"#[0-9a-fA-F]{6}", sheet_color
-    ) else "#e5e7eb"
+    color = score_gradient_color(score) or "#e5e7eb"
     return (
         '<div class="score-cell" style="background:{}" '
-        'title="Score global du Sheet : {:.0f}/100" '
+        'title="Score global calculé avec le cours Yahoo : {:.0f}/100" '
         'role="img" aria-label="Score global {:.0f} sur 100">'
         '<span>{:.0f}</span>'
         '</div>'
@@ -1178,9 +1091,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             r.get("currency"),
             yf_s,
         )
-        if price is None and pd.notna(r.get("spot_sheet")):
-            # Le cours du Sheet est déjà exprimé dans la devise de la ligne.
-            price = r.get("spot_sheet")
         chg = q.get("chg")
         sheet_name = (r.get("name") or "") if pd.notna(r.get("name")) else ""
         name = str(names.get(yf_s, "") or sheet_name)
@@ -1192,9 +1102,9 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         hide_target_decimals = any(
             value is not None and value > 1_000 for value in target_values
         )
-        score = safe_float(r.get("score_sheet"))
-        upside = compute_upside(price, fair, trim)
         quality = safe_float(r.get("note"))
+        score = compute_score(compute_ratio(price, buy, exit_), quality)
+        upside = compute_upside(price, fair, trim)
         prompt_version = (
             "" if pd.isna(r.get("prompt_version")) else str(r.get("prompt_version")).strip()
         )
@@ -1279,7 +1189,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             "Score":    (
                 screening_zone_html
                 if screened_only
-                else html_score_cell(score, r.get("_score_sheet_color"))
+                else html_score_cell(score)
             ),
             "Buy":      fmt_target(buy, hide_target_decimals),
             "Fair":     fmt_target(fair, hide_target_decimals),
@@ -1928,10 +1838,6 @@ warn_sheet_errors(st.session_state.get("audit_sheet_errors", []), "Audits")
 warn_alias_collisions(st.session_state.get("column_alias_collisions", {}), "Registre")
 warn_alias_collisions(st.session_state.get("screening_alias_collisions", {}), "Screening")
 warn_alias_collisions(st.session_state.get("audit_alias_collisions", {}), "Audits")
-
-score_color_warning = st.session_state.get("score_color_warning")
-if score_color_warning:
-    st.warning(score_color_warning)
 
 # ── Header bar : stats + boutons ──────────────────────────────────────────────
 last_ts = st.session_state.get("last_fetch_ts", "—")

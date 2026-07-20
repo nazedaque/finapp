@@ -53,6 +53,15 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn('st.session_state["sheet_errors"] = find_sheet_errors(df)', self.source)
         self.assertIn("warn_sheet_errors(", self.source)
 
+    def test_price_and_score_use_yahoo_without_sheet_fallback(self):
+        self.assertNotIn('price = r.get("spot_sheet")', self.source)
+        self.assertNotIn('score = safe_float(r.get("score_sheet"))', self.source)
+        self.assertIn(
+            "score = compute_score(compute_ratio(price, buy, exit_), quality)",
+            self.source,
+        )
+        self.assertIn("Score global calculé avec le cours Yahoo", self.source)
+
     def test_legacy_asia_routing_is_absent(self):
         self.assertNotIn("Asie", self.source)
         self.assertNotIn("asia_", self.source)

@@ -20,8 +20,8 @@ from finapp_logic import (
     normalize_portif,
     parse_number,
     parse_sheet_date,
-    resolve_score,
     safe_date_ordinal,
+    score_gradient_color,
     stale_quote_tickers,
 )
 
@@ -88,13 +88,17 @@ class ScoreSafetyTests(unittest.TestCase):
         self.assertIsNone(compute_score(float("nan"), 80))
         self.assertIsNone(compute_score(0.5, float("inf")))
 
-    def test_missing_target_uses_sheet_score(self):
-        score = resolve_score(75, float("nan"), 100, 80, 74.5)
-        self.assertEqual(score, 74.5)
-
-    def test_complete_inputs_keep_existing_formula(self):
-        score = resolve_score(75, 50, 100, 80, 74.5)
+    def test_complete_live_inputs_use_the_sheet_formula(self):
+        score = compute_score(compute_ratio(75, 50, 100), 80)
         self.assertTrue(math.isclose(score, 62.0))
+
+    def test_score_colors_match_the_sheet_gradient_stops(self):
+        self.assertEqual(score_gradient_color(20), "#ff0000")
+        self.assertEqual(score_gradient_color(30), "#ff0000")
+        self.assertEqual(score_gradient_color(50), "#ffd966")
+        self.assertEqual(score_gradient_color(80), "#6aa84f")
+        self.assertEqual(score_gradient_color(95), "#6aa84f")
+        self.assertIsNone(score_gradient_color(None))
 
 
 class NumberParsingTests(unittest.TestCase):
