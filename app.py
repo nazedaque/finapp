@@ -25,6 +25,7 @@ from finapp_logic import (
     country_code,
     finite_float,
     find_sheet_errors,
+    is_blocking_audit_status,
     is_suspended_underwriting,
     merge_quote_cache,
     parse_number,
@@ -1018,10 +1019,15 @@ def html_audit(
             color, label, rank = "#facc15", "Actualisation matérielle — nouvel audit requis", 1
         else:
             color, label, rank = "#ef4444", "Non auditable / décision suspendue", -1
-    elif normalized == "non auditable" or registry_normalized == "non auditable":
+    elif is_blocking_audit_status(value) or is_blocking_audit_status(registry_value):
         color, label, rank = "#ef4444", "Non auditable", -1
-        if value:
-            label += f" — {value}"
+        status_label = value or registry_value
+        if _normalize_col(status_label) == "correction a confirmer":
+            label = "Correction à confirmer — décision suspendue"
+        elif _normalize_col(status_label) == "validation fail":
+            label = "Validation échouée — décision suspendue"
+        elif status_label:
+            label += f" — {status_label}"
     elif value:
         color, label, rank = "#22c55e", "Audité — aucun changement matériel depuis", 2
         label += f" — {value}"
@@ -1140,6 +1146,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         underwritten = not screened_only and (
             bool(prompt_version) or sum(value is not None for value in target_values) >= 3
         )
+        audit_blocked = underwritten and (
+            is_blocking_audit_status(r.get("_audit_status"))
+            or is_blocking_audit_status(r.get("verif"))
+        )
         analytic_complete = quality is not None and all(
             value is not None for value in target_values
         )
@@ -1158,6 +1168,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             if screened_only
             else score
         )
+        if audit_blocked:
+            score = None
+            upside = None
+            screening_sort_score = None
         audit_html, audit_rank = html_audit(
             r.get("_audit_status"),
             underwritten,
@@ -1218,10 +1232,10 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 if screened_only
                 else html_score_cell(score)
             ),
-            "Buy":      fmt_target(buy, hide_target_decimals),
-            "Fair":     fmt_target(fair, hide_target_decimals),
-            "Trim":     fmt_target(trim, hide_target_decimals),
-            "Exit":     fmt_target(exit_, hide_target_decimals),
+            "Buy":      "—" if audit_blocked else fmt_target(buy, hide_target_decimals),
+            "Fair":     "—" if audit_blocked else fmt_target(fair, hide_target_decimals),
+            "Trim":     "—" if audit_blocked else fmt_target(trim, hide_target_decimals),
+            "Exit":     "—" if audit_blocked else fmt_target(exit_, hide_target_decimals),
             "Industrie": (
                 f'<span title="{html.escape(industry, quote=True)}">'
                 f'{html.escape(industry)}</span>'
