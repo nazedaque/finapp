@@ -13,7 +13,6 @@ from finapp_logic import (
     compute_score,
     country_code,
     find_sheet_errors,
-    is_blocking_audit_status,
     is_suspended_underwriting,
     merge_quote_cache,
     normalize_register_frame,
@@ -388,27 +387,6 @@ class WatchlistEligibilityTests(unittest.TestCase):
         }
 
         self.assertFalse(is_suspended_underwriting(row))
-
-    def test_unconfirmed_or_failed_audit_blocks_active_decision(self):
-        for status in (
-            "CORRECTION À CONFIRMER",
-            "VALIDATION FAIL",
-            "NON AUDITABLE",
-        ):
-            with self.subTest(status=status):
-                self.assertTrue(is_blocking_audit_status(status))
-
-    def test_completed_audit_statuses_remain_operational(self):
-        for status in (
-            "PASS",
-            "PASS AVEC RÉSERVES",
-            "CORRIGÉ APRÈS AUDIT",
-            "CORRECTION MATÉRIELLE",
-            "VALIDATION PASS",
-        ):
-            with self.subTest(status=status):
-                self.assertFalse(is_blocking_audit_status(status))
-
 
 class SheetDateParsingTests(unittest.TestCase):
     def test_iso_dates_do_not_emit_dayfirst_warning(self):

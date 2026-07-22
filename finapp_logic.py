@@ -466,15 +466,6 @@ def is_suspended_underwriting(row) -> bool:
     return all(finite_float(row.get(field)) is None for field in analytic_fields)
 
 
-def is_blocking_audit_status(value) -> bool:
-    """Indique qu'un dossier ne doit produire ni score global ni zones actives."""
-    return normalize_column_name(value) in {
-        "correction a confirmer",
-        "validation fail",
-        "non auditable",
-    }
-
-
 def country_code(ticker: str) -> str:
     normalized = str(ticker or "").upper().strip()
     for suffix, code in COUNTRY_SUFFIXES:

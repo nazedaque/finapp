@@ -25,7 +25,6 @@ from finapp_logic import (
     country_code,
     finite_float,
     find_sheet_errors,
-    is_blocking_audit_status,
     is_suspended_underwriting,
     merge_quote_cache,
     parse_number,
@@ -1019,14 +1018,10 @@ def html_audit(
             color, label, rank = "#facc15", "Actualisation matérielle — nouvel audit requis", 1
         else:
             color, label, rank = "#ef4444", "Non auditable / décision suspendue", -1
-    elif is_blocking_audit_status(value) or is_blocking_audit_status(registry_value):
+    elif normalized == "non auditable" or registry_normalized == "non auditable":
         color, label, rank = "#ef4444", "Non auditable", -1
         status_label = value or registry_value
-        if _normalize_col(status_label) == "correction a confirmer":
-            label = "Correction à confirmer — décision suspendue"
-        elif _normalize_col(status_label) == "validation fail":
-            label = "Validation échouée — décision suspendue"
-        elif status_label:
+        if status_label:
             label += f" — {status_label}"
     elif value:
         color, label, rank = "#22c55e", "Audité — aucun changement matériel depuis", 2
@@ -1147,8 +1142,8 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             bool(prompt_version) or sum(value is not None for value in target_values) >= 3
         )
         audit_blocked = underwritten and (
-            is_blocking_audit_status(r.get("_audit_status"))
-            or is_blocking_audit_status(r.get("verif"))
+            _normalize_col(r.get("_audit_status")) == "non auditable"
+            or _normalize_col(r.get("verif")) == "non auditable"
         )
         analytic_complete = quality is not None and all(
             value is not None for value in target_values

@@ -5,6 +5,8 @@ from pathlib import Path
 import unittest
 import urllib
 
+import finapp_logic
+
 
 class _SingleTagParser(HTMLParser):
     def __init__(self):
@@ -25,6 +27,25 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn('f"Portefeuille ({len(pf_df)})"', self.source)
         self.assertIn('f"Watchlist ({len(wl_df)})"', self.source)
         self.assertIn('f"Screenés ({len(to_analyze_df)})"', self.source)
+
+    def test_every_finapp_logic_import_exists(self):
+        tree = ast.parse(self.source)
+        imported_names = [
+            alias.name
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and node.module == "finapp_logic"
+            for alias in node.names
+        ]
+        missing = [name for name in imported_names if not hasattr(finapp_logic, name)]
+        self.assertEqual(missing, [])
+
+    def test_only_non_auditable_blocks_active_values(self):
+        self.assertIn(
+            '_normalize_col(r.get("_audit_status")) == "non auditable"',
+            self.source,
+        )
+        self.assertNotIn("correction a confirmer", self.source.casefold())
+        self.assertNotIn("validation fail", self.source.casefold())
 
     def test_screener_uses_the_separate_screening_sheet(self):
         self.assertIn('SCREENING_SHEET_NAME = "Screening"', self.source)
