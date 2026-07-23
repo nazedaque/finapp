@@ -229,7 +229,7 @@ DISPLAY_COLS = [
     "Score", "Buy", "Fair", "Trim", "Exit", "Industrie",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "Liens": "58px", "JRS": "38px", "Pays": "36px",
+    "MAJ": "46px", "Liens": "44px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
@@ -1417,7 +1417,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 7px;
   width: 100%;
   vertical-align: middle;
 }
@@ -1426,52 +1426,53 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   align-items: center;
   justify-content: center;
   text-decoration: none;
-  border-radius: 50%;
 }
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
 .workflow-light {
+  --workflow-state: #64748b;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 17px;
+  width: 12px;
   height: 17px;
   box-sizing: border-box;
-  border: 1px solid currentColor;
-  border-radius: 50%;
+  padding-bottom: 3px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 700;
   line-height: 1;
-  transition: transform .12s ease, filter .12s ease;
+  color: #d1d5db;
+  background: transparent;
+  transition: color .12s ease;
+}
+.workflow-light::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  left: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--workflow-state);
+  opacity: .9;
 }
 .workflow-link:not(.workflow-link--disabled):hover .workflow-light {
-  transform: translateY(-1px) scale(1.07);
-  filter: brightness(1.12);
+  color: #ffffff;
 }
 .workflow-light--off {
-  color: #f8fafc;
-  background: rgba(248, 250, 252, .08);
-  border-color: rgba(248, 250, 252, .78);
-  box-shadow: 0 0 5px rgba(248, 250, 252, .28);
+  --workflow-state: #64748b;
+  color: #94a3b8;
 }
 .workflow-light--green {
-  color: #07110a;
-  background: #22c55e;
-  border-color: #86efac;
-  box-shadow: 0 0 7px rgba(34, 197, 94, .82);
+  --workflow-state: #22c55e;
 }
 .workflow-light--yellow {
-  color: #171006;
-  background: #facc15;
-  border-color: #fde68a;
-  box-shadow: 0 0 7px rgba(250, 204, 21, .82);
+  --workflow-state: #facc15;
 }
 .workflow-light--red {
-  color: #160606;
-  background: #ef4444;
-  border-color: #fca5a5;
-  box-shadow: 0 0 7px rgba(239, 68, 68, .82);
+  --workflow-state: #ef4444;
 }
 .score-cell {
   height: 20px;

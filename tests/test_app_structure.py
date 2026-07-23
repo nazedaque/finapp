@@ -191,9 +191,19 @@ class AppStructureTests(unittest.TestCase):
 
     def test_links_column_replaces_the_legacy_audit_light(self):
         self.assertIn('"MAJ", "Liens", "JRS"', self.source)
+        self.assertIn('"Liens": "44px"', self.source)
         self.assertIn('"lien underwriting": "underwriting_link"', self.source)
         self.assertIn('"lien audit": "audit_link"', self.source)
         self.assertNotIn(".audit-light", self.source)
+
+    def test_workflow_links_use_discreet_underlines_without_circles(self):
+        workflow_css = self.source.split(".workflow-links {", 1)[1].split(
+            ".score-cell {", 1
+        )[0]
+        self.assertIn(".workflow-light::after", workflow_css)
+        self.assertIn("background: var(--workflow-state)", workflow_css)
+        self.assertNotIn("border-radius: 50%", workflow_css)
+        self.assertNotIn("box-shadow", workflow_css)
 
     def test_latest_audit_row_supplies_status_and_link_together(self):
         tree = ast.parse(self.source)
