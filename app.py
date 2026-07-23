@@ -239,7 +239,7 @@ CENTER = {"MAJ", "Liens", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Industrie"}
 HEADER_CENTER = CENTER
-HEADER_LABELS = {"Pays": "EXC"}
+HEADER_LABELS = {"Pays": "EXC", "Liens": "LIEN"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
     "Liens": "number",

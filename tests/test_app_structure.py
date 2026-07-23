@@ -192,6 +192,7 @@ class AppStructureTests(unittest.TestCase):
     def test_links_column_replaces_the_legacy_audit_light(self):
         self.assertIn('"MAJ", "Liens", "JRS"', self.source)
         self.assertIn('"Liens": "44px"', self.source)
+        self.assertIn('"Liens": "LIEN"', self.source)
         self.assertIn('"lien underwriting": "underwriting_link"', self.source)
         self.assertIn('"lien audit": "audit_link"', self.source)
         self.assertNotIn(".audit-light", self.source)
