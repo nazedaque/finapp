@@ -215,6 +215,7 @@ class AppStructureTests(unittest.TestCase):
 
     def test_audit_tooltip_and_screening_score_typography_are_minimal(self):
         self.assertIn('audit_label = "Audit valide"', self.source)
+        self.assertIn('audit_label = "Audit à mettre à jour"', self.source)
         self.assertNotIn('audit_label = f"Audit valide - {value}"', self.source)
         screening_css = self.source.split(".screening-zone-label {", 1)[1].split(
             ".wl-country-flag {", 1
@@ -223,7 +224,7 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("font-weight: inherit", screening_css)
         self.assertIn("line-height: inherit", screening_css)
 
-    def test_workflow_letters_only_show_completed_valid_steps(self):
+    def test_workflow_letters_keep_stale_audit_links_visible(self):
         tree = ast.parse(self.source)
         function = next(
             node for node in tree.body
@@ -233,7 +234,10 @@ class AppStructureTests(unittest.TestCase):
             "fmt_verif": lambda value: "" if value is None else str(value).strip(),
             "_normalize_col": lambda value: str(value).strip().lower(),
             "normalize_codex_thread_link": lambda value: "" if not value else str(value),
-            "html_workflow_letter": lambda letter, label, link=None: f"<{letter}>",
+            "html_workflow_letter": (
+                lambda letter, label, link=None, state="":
+                f"<{letter}:{state}>" if state else f"<{letter}>"
+            ),
             "html_workflow_placeholder": lambda short=False: "<->" if short else "<—>",
         }
         module = ast.Module(body=[function], type_ignores=[])
@@ -254,8 +258,12 @@ class AppStructureTests(unittest.TestCase):
         )
         self.assertEqual(
             render("PASS", True, audit_impact="MATERIAL"),
-            ('<span class="workflow-links"><U><-></span>', 1),
+            ('<span class="workflow-links"><U><A:stale></span>', 2),
         )
+
+    def test_stale_audit_uses_orange_workflow_state(self):
+        self.assertIn(".workflow-link--stale .workflow-letter", self.source)
+        self.assertIn("color: #f59e0b !important", self.source)
 
     def test_latest_audit_row_supplies_status_and_link_together(self):
         tree = ast.parse(self.source)

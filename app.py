@@ -1022,18 +1022,19 @@ def normalize_codex_thread_link(value) -> str:
     return link if CODEX_THREAD_LINK_RE.fullmatch(link) else ""
 
 
-def html_workflow_letter(letter: str, label: str, link=None) -> str:
+def html_workflow_letter(letter: str, label: str, link=None, state: str = "") -> str:
     safe_letter = letter if letter in {"U", "A"} else "?"
     safe_label = html.escape(label, quote=True)
     safe_link = normalize_codex_thread_link(link)
+    state_class = " workflow-link--stale" if state == "stale" else ""
     mark = f'<span class="workflow-letter" aria-hidden="true">{safe_letter}</span>'
     if safe_link:
         return (
-            f'<a class="workflow-link" href="{html.escape(safe_link, quote=True)}" '
+            f'<a class="workflow-link{state_class}" href="{html.escape(safe_link, quote=True)}" '
             f'title="{safe_label}" aria-label="{safe_label}">{mark}</a>'
         )
     return (
-        f'<span class="workflow-link workflow-link--disabled" title="{safe_label}" '
+        f'<span class="workflow-link workflow-link--disabled{state_class}" title="{safe_label}" '
         f'role="img" aria-label="{safe_label}">{mark}</span>'
     )
 
@@ -1075,15 +1076,25 @@ def html_workflow_links(
         and normalized != "non auditable"
         and registry_normalized != "non auditable"
     )
+    audit_exists = (
+        bool(value)
+        and normalized != "non auditable"
+        and registry_normalized != "non auditable"
+    )
 
     marks = [html_workflow_letter("U", underwriting_label, underwriting_link)]
     if audit_valid:
         audit_label = "Audit valide"
         marks.append(html_workflow_letter("A", audit_label, audit_link))
+    elif audit_exists:
+        audit_label = "Audit à mettre à jour"
+        if not normalize_codex_thread_link(audit_link):
+            audit_label += " - lien non renseigné"
+        marks.append(html_workflow_letter("A", audit_label, audit_link, state="stale"))
     else:
         marks.append(html_workflow_placeholder(short=True))
 
-    return f'<span class="workflow-links">{"".join(marks)}</span>', 2 if audit_valid else 1
+    return f'<span class="workflow-links">{"".join(marks)}</span>', 2 if audit_exists else 1
 
 
 def html_score_cell(v) -> str:
@@ -1422,6 +1433,9 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 }
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
+.workflow-link--stale .workflow-letter {
+  color: #f59e0b !important;
+}
 .workflow-letter,
 .workflow-placeholder {
   display: inline-flex;
