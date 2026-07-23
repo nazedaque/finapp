@@ -229,7 +229,7 @@ DISPLAY_COLS = [
     "Score", "Buy", "Fair", "Trim", "Exit", "Industrie",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "Liens": "44px", "JRS": "38px", "Pays": "36px",
+    "MAJ": "46px", "Liens": "30px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
@@ -239,7 +239,8 @@ CENTER = {"MAJ", "Liens", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Industrie"}
 HEADER_CENTER = CENTER
-HEADER_LABELS = {"Pays": "EXC", "Liens": "LIEN"}
+HEADER_LABELS = {"Pays": "EXC", "Liens": "↗"}
+HEADER_TITLES = {"Liens": "Liens"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
     "Liens": "number",
@@ -1021,30 +1022,25 @@ def normalize_codex_thread_link(value) -> str:
     return link if CODEX_THREAD_LINK_RE.fullmatch(link) else ""
 
 
-def html_workflow_badge(letter: str, state: str, label: str, link=None) -> str:
+def html_workflow_letter(letter: str, label: str, link=None) -> str:
     safe_letter = letter if letter in {"U", "A"} else "?"
-    safe_state = state if state in {"off", "green", "yellow", "red"} else "off"
     safe_label = html.escape(label, quote=True)
     safe_link = normalize_codex_thread_link(link)
-    light = (
-        f'<span class="workflow-light workflow-light--{safe_state}" '
-        f'aria-hidden="true">{safe_letter}</span>'
-    )
+    mark = f'<span class="workflow-letter" aria-hidden="true">{safe_letter}</span>'
     if safe_link:
         return (
             f'<a class="workflow-link" href="{html.escape(safe_link, quote=True)}" '
-            f'title="{safe_label}" aria-label="{safe_label}">{light}</a>'
+            f'title="{safe_label}" aria-label="{safe_label}">{mark}</a>'
         )
     return (
         f'<span class="workflow-link workflow-link--disabled" title="{safe_label}" '
-        f'role="img" aria-label="{safe_label}">{light}</span>'
+        f'role="img" aria-label="{safe_label}">{mark}</span>'
     )
 
 
 def html_workflow_links(
         v,
         underwritten: bool,
-        screening_key_point=None,
         audit_impact=None,
         analytic_complete: bool = True,
         registry_audit=None,
@@ -1056,47 +1052,29 @@ def html_workflow_links(
     registry_normalized = _normalize_col(registry_value)
     impact = _normalize_col(fmt_verif(audit_impact))
 
-    if underwritten:
-        underwriting_state = "green"
-        underwriting_label = "Underwriting réalisé"
-        if not normalize_codex_thread_link(underwriting_link):
-            underwriting_label += " - lien non renseigné"
-    else:
-        underwriting_state = "off"
-        underwriting_label = "Underwriting non réalisé"
-        if screening_key_point is not None and not pd.isna(screening_key_point):
-            key_point = str(screening_key_point).strip()
-            if key_point:
-                underwriting_label += f" - {key_point}"
+    if not underwritten:
+        return "", 0
 
-    if underwritten and impact == "material":
-        if analytic_complete:
-            audit_state, audit_label, rank = "yellow", "Actualisation matérielle - nouvel audit requis", 1
-        else:
-            audit_state, audit_label, rank = "red", "Non auditable / décision suspendue", -1
-    elif normalized == "non auditable" or registry_normalized == "non auditable":
-        audit_state, audit_label, rank = "red", "Non auditable", -1
-        status_label = value or registry_value
-        if status_label:
-            audit_label += f" - {status_label}"
-    elif value:
-        audit_state, audit_label, rank = "green", "Audité - aucun changement matériel depuis", 2
-        audit_label += f" - {value}"
-    elif underwritten:
-        audit_state, audit_label, rank = "off", "Audit non réalisé", 1
-    else:
-        audit_state, audit_label, rank = "off", "Audit non applicable avant underwriting", 0
+    underwriting_label = "Underwriting réalisé"
+    if not normalize_codex_thread_link(underwriting_link):
+        underwriting_label += " - lien non renseigné"
 
-    if audit_state != "off" and not normalize_codex_thread_link(audit_link):
-        audit_label += " - lien non renseigné"
-
-    links = (
-        '<span class="workflow-links">'
-        f'{html_workflow_badge("U", underwriting_state, underwriting_label, underwriting_link)}'
-        f'{html_workflow_badge("A", audit_state, audit_label, audit_link)}'
-        '</span>'
+    audit_valid = (
+        bool(value)
+        and impact != "material"
+        and analytic_complete
+        and normalized != "non auditable"
+        and registry_normalized != "non auditable"
     )
-    return links, rank
+
+    marks = [html_workflow_letter("U", underwriting_label, underwriting_link)]
+    if audit_valid:
+        audit_label = f"Audit valide - {value}"
+        if not normalize_codex_thread_link(audit_link):
+            audit_label += " - lien non renseigné"
+        marks.append(html_workflow_letter("A", audit_label, audit_link))
+
+    return f'<span class="workflow-links">{"".join(marks)}</span>', 2 if audit_valid else 1
 
 
 def html_score_cell(v) -> str:
@@ -1227,7 +1205,6 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
         links_html, links_rank = html_workflow_links(
             r.get("_audit_status"),
             underwritten,
-            r.get("screening_key_point"),
             r.get("audit_impact"),
             analytic_complete,
             r.get("verif"),
@@ -1417,7 +1394,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 5px;
   width: 100%;
   vertical-align: middle;
 }
@@ -1425,54 +1402,24 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: #f8fafc;
   text-decoration: none;
 }
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
-.workflow-light {
-  --workflow-state: #64748b;
-  position: relative;
+.workflow-letter {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 17px;
-  box-sizing: border-box;
-  padding-bottom: 3px;
-  font-family: 'JetBrains Mono', monospace;
+  min-width: 8px;
+  font-family: inherit;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1;
-  color: #d1d5db;
-  background: transparent;
-  transition: color .12s ease;
 }
-.workflow-light::after {
-  content: "";
-  position: absolute;
-  right: 1px;
-  bottom: 0;
-  left: 1px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--workflow-state);
-  opacity: .9;
-}
-.workflow-link:not(.workflow-link--disabled):hover .workflow-light {
-  color: #ffffff;
-}
-.workflow-light--off {
-  --workflow-state: #64748b;
-  color: #94a3b8;
-}
-.workflow-light--green {
-  --workflow-state: #22c55e;
-}
-.workflow-light--yellow {
-  --workflow-state: #facc15;
-}
-.workflow-light--red {
-  --workflow-state: #ef4444;
+.workflow-link:not(.workflow-link--disabled):hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .score-cell {
   height: 20px;
@@ -1531,7 +1478,8 @@ def render_table(rows: list[dict], key: str,
             f' aria-sort="{initial_sort}" tabindex="0" role="button"'
             if sortable else ""
         )
-        title = f"{label} — cliquer pour trier" if sortable else label
+        title_label = HEADER_TITLES.get(column, label)
+        title = f"{title_label} — cliquer pour trier" if sortable else title_label
 
         th_parts.append(
             f'<th class="{classes}" title="{title}"{sort_attrs}>{label}</th>'

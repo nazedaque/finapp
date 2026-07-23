@@ -164,7 +164,7 @@ class AppStructureTests(unittest.TestCase):
                 selected.append(node)
             if isinstance(node, ast.FunctionDef) and node.name in {
                 "normalize_codex_thread_link",
-                "html_workflow_badge",
+                "html_workflow_letter",
             }:
                 selected.append(node)
 
@@ -176,35 +176,63 @@ class AppStructureTests(unittest.TestCase):
         self.assertEqual(namespace["normalize_codex_thread_link"](valid), valid)
         self.assertEqual(namespace["normalize_codex_thread_link"]("https://example.com"), "")
 
-        markup = namespace["html_workflow_badge"]("U", "green", "Ouvrir", valid)
+        markup = namespace["html_workflow_letter"]("U", "Ouvrir", valid)
         parser = _SingleTagParser()
         parser.feed(markup)
         self.assertEqual(parser.tags[0][0], "a")
         self.assertEqual(parser.tags[0][1]["href"], valid)
-        self.assertIn("workflow-light--green", markup)
+        self.assertIn("workflow-letter", markup)
 
-        invalid_markup = namespace["html_workflow_badge"](
-            "A", "green", "Lien invalide", "javascript:alert(1)"
+        invalid_markup = namespace["html_workflow_letter"](
+            "A", "Lien invalide", "javascript:alert(1)"
         )
         self.assertNotIn("<a ", invalid_markup)
         self.assertIn("workflow-link--disabled", invalid_markup)
 
     def test_links_column_replaces_the_legacy_audit_light(self):
         self.assertIn('"MAJ", "Liens", "JRS"', self.source)
-        self.assertIn('"Liens": "44px"', self.source)
-        self.assertIn('"Liens": "LIEN"', self.source)
+        self.assertIn('"Liens": "30px"', self.source)
+        self.assertIn('"Liens": "↗"', self.source)
         self.assertIn('"lien underwriting": "underwriting_link"', self.source)
         self.assertIn('"lien audit": "audit_link"', self.source)
         self.assertNotIn(".audit-light", self.source)
 
-    def test_workflow_links_use_discreet_underlines_without_circles(self):
+    def test_workflow_links_use_plain_white_letters(self):
         workflow_css = self.source.split(".workflow-links {", 1)[1].split(
             ".score-cell {", 1
         )[0]
-        self.assertIn(".workflow-light::after", workflow_css)
-        self.assertIn("background: var(--workflow-state)", workflow_css)
+        self.assertIn(".workflow-letter", workflow_css)
+        self.assertIn("color: #f8fafc", workflow_css)
         self.assertNotIn("border-radius: 50%", workflow_css)
         self.assertNotIn("box-shadow", workflow_css)
+        self.assertNotIn("workflow-light", workflow_css)
+
+    def test_workflow_letters_only_show_completed_valid_steps(self):
+        tree = ast.parse(self.source)
+        function = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "html_workflow_links"
+        )
+        namespace = {
+            "fmt_verif": lambda value: "" if value is None else str(value).strip(),
+            "_normalize_col": lambda value: str(value).strip().lower(),
+            "normalize_codex_thread_link": lambda value: "" if not value else str(value),
+            "html_workflow_letter": lambda letter, label, link=None: f"<{letter}>",
+        }
+        module = ast.Module(body=[function], type_ignores=[])
+        exec(compile(ast.fix_missing_locations(module), "app.py", "exec"), namespace)
+        render = namespace["html_workflow_links"]
+
+        self.assertEqual(render("", False), ("", 0))
+        self.assertEqual(render("", True), ('<span class="workflow-links"><U></span>', 1))
+        self.assertEqual(
+            render("PASS", True),
+            ('<span class="workflow-links"><U><A></span>', 2),
+        )
+        self.assertEqual(
+            render("PASS", True, audit_impact="MATERIAL"),
+            ('<span class="workflow-links"><U></span>', 1),
+        )
 
     def test_latest_audit_row_supplies_status_and_link_together(self):
         tree = ast.parse(self.source)
