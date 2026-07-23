@@ -1038,6 +1038,11 @@ def html_workflow_letter(letter: str, label: str, link=None) -> str:
     )
 
 
+def html_workflow_placeholder(short: bool = False) -> str:
+    mark = "-" if short else "—"
+    return f'<span class="workflow-placeholder" aria-label="Aucune référence">{mark}</span>'
+
+
 def html_workflow_links(
         v,
         underwritten: bool,
@@ -1053,7 +1058,7 @@ def html_workflow_links(
     impact = _normalize_col(fmt_verif(audit_impact))
 
     if not underwritten:
-        return "", 0
+        return f'<span class="workflow-links">{html_workflow_placeholder()}</span>', 0
 
     underwriting_label = "Underwriting réalisé"
     if not normalize_codex_thread_link(underwriting_link):
@@ -1073,6 +1078,8 @@ def html_workflow_links(
         if not normalize_codex_thread_link(audit_link):
             audit_label += " - lien non renseigné"
         marks.append(html_workflow_letter("A", audit_label, audit_link))
+    else:
+        marks.append(html_workflow_placeholder(short=True))
 
     return f'<span class="workflow-links">{"".join(marks)}</span>', 2 if audit_valid else 1
 
@@ -1402,18 +1409,19 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #f8fafc;
+  color: #ffffff;
   text-decoration: none;
 }
 .wl-table a.workflow-link,
 .wl-table a.workflow-link:hover,
 .wl-table a.workflow-link:focus,
 .wl-table a.workflow-link:visited {
-  color: #f8fafc !important;
+  color: #ffffff !important;
 }
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
-.workflow-letter {
+.workflow-letter,
+.workflow-placeholder {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1422,6 +1430,7 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-size: 10px;
   font-weight: 400;
   line-height: 1;
+  color: #ffffff !important;
 }
 .score-cell {
   height: 20px;

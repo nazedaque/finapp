@@ -202,8 +202,8 @@ class AppStructureTests(unittest.TestCase):
             ".score-cell {", 1
         )[0]
         self.assertIn(".workflow-letter", workflow_css)
-        self.assertIn("color: #f8fafc", workflow_css)
-        self.assertIn("color: #f8fafc !important", workflow_css)
+        self.assertIn(".workflow-placeholder", workflow_css)
+        self.assertIn("color: #ffffff !important", workflow_css)
         self.assertNotIn("border-radius: 50%", workflow_css)
         self.assertNotIn("box-shadow", workflow_css)
         self.assertNotIn("workflow-light", workflow_css)
@@ -219,20 +219,27 @@ class AppStructureTests(unittest.TestCase):
             "_normalize_col": lambda value: str(value).strip().lower(),
             "normalize_codex_thread_link": lambda value: "" if not value else str(value),
             "html_workflow_letter": lambda letter, label, link=None: f"<{letter}>",
+            "html_workflow_placeholder": lambda short=False: "<->" if short else "<—>",
         }
         module = ast.Module(body=[function], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), "app.py", "exec"), namespace)
         render = namespace["html_workflow_links"]
 
-        self.assertEqual(render("", False), ("", 0))
-        self.assertEqual(render("", True), ('<span class="workflow-links"><U></span>', 1))
+        self.assertEqual(
+            render("", False),
+            ('<span class="workflow-links"><—></span>', 0),
+        )
+        self.assertEqual(
+            render("", True),
+            ('<span class="workflow-links"><U><-></span>', 1),
+        )
         self.assertEqual(
             render("PASS", True),
             ('<span class="workflow-links"><U><A></span>', 2),
         )
         self.assertEqual(
             render("PASS", True, audit_impact="MATERIAL"),
-            ('<span class="workflow-links"><U></span>', 1),
+            ('<span class="workflow-links"><U><-></span>', 1),
         )
 
     def test_latest_audit_row_supplies_status_and_link_together(self):
