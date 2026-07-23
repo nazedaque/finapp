@@ -1409,14 +1409,14 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
+  color: #93c5fd;
   text-decoration: none;
 }
 .wl-table a.workflow-link,
 .wl-table a.workflow-link:hover,
 .wl-table a.workflow-link:focus,
 .wl-table a.workflow-link:visited {
-  color: #ffffff !important;
+  color: #93c5fd !important;
 }
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
@@ -1427,10 +1427,10 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   justify-content: center;
   min-width: 8px;
   font-family: inherit;
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1;
-  color: #ffffff !important;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: #93c5fd !important;
 }
 .score-cell {
   height: 20px;

@@ -197,13 +197,16 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn('"lien audit": "audit_link"', self.source)
         self.assertNotIn(".audit-light", self.source)
 
-    def test_workflow_links_use_plain_white_letters(self):
+    def test_workflow_links_use_ticker_blue_and_table_typography(self):
         workflow_css = self.source.split(".workflow-links {", 1)[1].split(
             ".score-cell {", 1
         )[0]
         self.assertIn(".workflow-letter", workflow_css)
         self.assertIn(".workflow-placeholder", workflow_css)
-        self.assertIn("color: #ffffff !important", workflow_css)
+        self.assertIn("color: #93c5fd !important", workflow_css)
+        self.assertIn("font-size: inherit", workflow_css)
+        self.assertIn("line-height: inherit", workflow_css)
+        self.assertNotIn("color: #ffffff", workflow_css)
         self.assertNotIn("border-radius: 50%", workflow_css)
         self.assertNotIn("box-shadow", workflow_css)
         self.assertNotIn("workflow-light", workflow_css)
