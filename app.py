@@ -225,24 +225,24 @@ access_guard()
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISPLAY_COLS = [
-    "MAJ", "Audit", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
+    "MAJ", "Liens", "JRS", "Pays", "Ticker", "Société", "Qual", "Prix", "Var %", "Upside",
     "Score", "Buy", "Fair", "Trim", "Exit", "Industrie",
 ]
 COL_WIDTHS = {
-    "MAJ": "46px", "Audit": "42px", "JRS": "38px", "Pays": "36px",
+    "MAJ": "46px", "Liens": "58px", "JRS": "38px", "Pays": "36px",
     "Ticker": "49px", "Société": "145px", "Qual": "44px",
     "Prix": "45px", "Var %": "55px", "Upside": "51px",
     "Score": "62px",
     "Buy": "51px", "Fair": "51px", "Trim": "51px", "Exit": "51px", "Industrie": "145px",
 }
-CENTER = {"MAJ", "Audit", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
+CENTER = {"MAJ", "Liens", "JRS", "Pays", "Prix", "Var %", "Upside", "Score",
           "Buy", "Fair", "Trim", "Exit", "Qual"}
 GROUP_STARTS = {"Prix", "Score", "Buy", "Industrie"}
 HEADER_CENTER = CENTER
 HEADER_LABELS = {"Pays": "EXC"}
 SORTABLE_COLUMNS = {
     "MAJ": "number",
-    "Audit": "number",
+    "Liens": "number",
     "JRS": "number",
     "Pays": "text",
     "Ticker": "text",
@@ -302,6 +302,7 @@ SHEET_COL_NORMALIZED = {
     "version prompt": "prompt_version",
     "audit": "verif",
     "audit impact": "audit_impact",
+    "lien underwriting": "underwriting_link",
     "action suivante": "next_action",
     "last update": "last_update",
     "yf ticker":   "yf_ticker",
@@ -328,6 +329,7 @@ SCREENING_COL_NORMALIZED = {
 AUDIT_COL_NORMALIZED = {
     "ticker": "gf_ticker",
     "statut audit": "audit_status",
+    "lien audit": "audit_link",
 }
 NUMERIC_COLS = [
     "note", "buy", "fair", "trim", "exit", "spot_sheet", "score_sheet",
@@ -336,7 +338,7 @@ NUMERIC_COLS = [
 REGISTER_TEXT_COLS = [
     "gf_ticker", "yf_ticker", "name", "currency", "url", "comments", "zone",
     "confidence", "normalization_sensitivity", "accounts_date", "prompt_version",
-    "verif", "audit_impact", "next_action",
+    "verif", "audit_impact", "next_action", "underwriting_link",
 ]
 
 
@@ -516,26 +518,32 @@ def load_screening_candidates(
     return _normalize_screening_candidates(raw_df, registry_tickers)
 
 
-def _normalize_audit_statuses(raw_df: pd.DataFrame) -> dict[str, str]:
-    """Conserve le dernier statut d'audit non vide pour chaque ticker."""
+def _normalize_audit_data(raw_df: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
+    """Conserve le statut et le lien du dernier audit pour chaque ticker."""
     df, alias_collisions = coalesce_alias_columns(raw_df, AUDIT_COL_NORMALIZED)
     st.session_state["audit_alias_collisions"] = alias_collisions
     if "gf_ticker" not in df.columns or "audit_status" not in df.columns:
-        return {}
+        return {}, {}
+
+    if "audit_link" not in df.columns:
+        df["audit_link"] = pd.NA
 
     df = df[df["gf_ticker"].notna() & df["audit_status"].notna()].copy()
     df["gf_ticker"] = df["gf_ticker"].map(clean_sheet_text).str.upper()
     df["audit_status"] = df["audit_status"].map(clean_sheet_text)
+    df["audit_link"] = df["audit_link"].map(clean_sheet_text)
     df = df[
         ~df["gf_ticker"].isin(["", "TICKER", "NAN", "NONE"])
         & df["audit_status"].ne("")
     ].copy()
     df = df.drop_duplicates(subset=["gf_ticker"], keep="last")
-    return dict(zip(df["gf_ticker"], df["audit_status"]))
+    statuses = dict(zip(df["gf_ticker"], df["audit_status"]))
+    links = dict(zip(df["gf_ticker"], df["audit_link"]))
+    return statuses, links
 
 
-def load_audit_statuses(force_refresh: bool = False) -> dict[str, str]:
-    """Charge les statuts depuis Audits ; le Registre ne suffit plus à valider un audit."""
+def load_audit_data(force_refresh: bool = False) -> tuple[dict[str, str], dict[str, str]]:
+    """Charge les statuts et liens depuis Audits."""
     try:
         raw_df = _read_audits_sheet(ttl=0 if force_refresh else "5m")
     except Exception as exc:
@@ -543,7 +551,7 @@ def load_audit_statuses(force_refresh: bool = False) -> dict[str, str]:
             "Impossible de lire SOL input / Audits avec la connexion Google privée."
         ) from exc
     st.session_state["audit_sheet_errors"] = find_sheet_errors(raw_df)
-    return _normalize_audit_statuses(raw_df)
+    return _normalize_audit_data(raw_df)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Métadonnées (noms) — parallèle, cache 7j
@@ -1000,46 +1008,95 @@ def fmt_verif(v) -> str:
     return value
 
 
-def html_audit(
+CODEX_THREAD_LINK_RE = re.compile(
+    r"^codex://threads/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def normalize_codex_thread_link(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    link = str(value).strip()
+    return link if CODEX_THREAD_LINK_RE.fullmatch(link) else ""
+
+
+def html_workflow_badge(letter: str, state: str, label: str, link=None) -> str:
+    safe_letter = letter if letter in {"U", "A"} else "?"
+    safe_state = state if state in {"off", "green", "yellow", "red"} else "off"
+    safe_label = html.escape(label, quote=True)
+    safe_link = normalize_codex_thread_link(link)
+    light = (
+        f'<span class="workflow-light workflow-light--{safe_state}" '
+        f'aria-hidden="true">{safe_letter}</span>'
+    )
+    if safe_link:
+        return (
+            f'<a class="workflow-link" href="{html.escape(safe_link, quote=True)}" '
+            f'title="{safe_label}" aria-label="{safe_label}">{light}</a>'
+        )
+    return (
+        f'<span class="workflow-link workflow-link--disabled" title="{safe_label}" '
+        f'role="img" aria-label="{safe_label}">{light}</span>'
+    )
+
+
+def html_workflow_links(
         v,
         underwritten: bool,
         screening_key_point=None,
         audit_impact=None,
         analytic_complete: bool = True,
-        registry_audit=None) -> tuple[str, int]:
+        registry_audit=None,
+        underwriting_link=None,
+        audit_link=None) -> tuple[str, int]:
     value = fmt_verif(v)
     normalized = _normalize_col(value)
     registry_value = fmt_verif(registry_audit)
     registry_normalized = _normalize_col(registry_value)
     impact = _normalize_col(fmt_verif(audit_impact))
 
+    if underwritten:
+        underwriting_state = "green"
+        underwriting_label = "Underwriting réalisé"
+        if not normalize_codex_thread_link(underwriting_link):
+            underwriting_label += " - lien non renseigné"
+    else:
+        underwriting_state = "off"
+        underwriting_label = "Underwriting non réalisé"
+        if screening_key_point is not None and not pd.isna(screening_key_point):
+            key_point = str(screening_key_point).strip()
+            if key_point:
+                underwriting_label += f" - {key_point}"
+
     if underwritten and impact == "material":
         if analytic_complete:
-            color, label, rank = "#facc15", "Actualisation matérielle — nouvel audit requis", 1
+            audit_state, audit_label, rank = "yellow", "Actualisation matérielle - nouvel audit requis", 1
         else:
-            color, label, rank = "#ef4444", "Non auditable / décision suspendue", -1
+            audit_state, audit_label, rank = "red", "Non auditable / décision suspendue", -1
     elif normalized == "non auditable" or registry_normalized == "non auditable":
-        color, label, rank = "#ef4444", "Non auditable", -1
+        audit_state, audit_label, rank = "red", "Non auditable", -1
         status_label = value or registry_value
         if status_label:
-            label += f" — {status_label}"
+            audit_label += f" - {status_label}"
     elif value:
-        color, label, rank = "#22c55e", "Audité — aucun changement matériel depuis", 2
-        label += f" — {value}"
+        audit_state, audit_label, rank = "green", "Audité - aucun changement matériel depuis", 2
+        audit_label += f" - {value}"
     elif underwritten:
-        color, label, rank = "#facc15", "Underwrité mais non audité", 1
+        audit_state, audit_label, rank = "off", "Audit non réalisé", 1
     else:
-        color, rank = "#f97316", 0
-        if screening_key_point is None or pd.isna(screening_key_point):
-            label = "Screené uniquement"
-        else:
-            label = str(screening_key_point).strip() or "Screené uniquement"
-    light = (
-        f'<span class="audit-light" title="{html.escape(label, quote=True)}" '
-        f'role="img" aria-label="{html.escape(label, quote=True)}" '
-        f'style="color:{color};background:{color}"></span>'
+        audit_state, audit_label, rank = "off", "Audit non applicable avant underwriting", 0
+
+    if audit_state != "off" and not normalize_codex_thread_link(audit_link):
+        audit_label += " - lien non renseigné"
+
+    links = (
+        '<span class="workflow-links">'
+        f'{html_workflow_badge("U", underwriting_state, underwriting_label, underwriting_link)}'
+        f'{html_workflow_badge("A", audit_state, audit_label, audit_link)}'
+        '</span>'
     )
-    return light, rank
+    return links, rank
 
 
 def html_score_cell(v) -> str:
@@ -1167,13 +1224,15 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
             score = None
             upside = None
             screening_sort_score = None
-        audit_html, audit_rank = html_audit(
+        links_html, links_rank = html_workflow_links(
             r.get("_audit_status"),
             underwritten,
             r.get("screening_key_point"),
             r.get("audit_impact"),
             analytic_complete,
             r.get("verif"),
+            r.get("underwriting_link"),
+            r.get("_audit_link"),
         )
         days = holding_days(r.get("purchase_date"))
         gf = str(r["gf_ticker"])
@@ -1196,7 +1255,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                     if isinstance(r.get("last_update"), date) and not pd.isna(r.get("last_update"))
                     else None
                 ),
-                "Audit": audit_rank,
+                "Liens": links_rank,
                 "JRS": None if screened_only else days,
                 "Pays": country_code(yf_s),
                 "Ticker": gf,
@@ -1209,7 +1268,7 @@ def build_rows(df_sub: pd.DataFrame, prices: dict,
                 "Industrie": industry,
             },
             "MAJ":      fmt_maj(r.get("last_update")),
-            "Audit":    audit_html,
+            "Liens":    links_html,
             "JRS":      (
                 "—"
                 if screened_only
@@ -1354,13 +1413,65 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   border-radius: 2px;
   vertical-align: middle;
 }
-.audit-light {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  box-shadow: 0 0 7px currentColor;
+.workflow-links {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
   vertical-align: middle;
+}
+.workflow-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 50%;
+}
+.workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
+.workflow-link--disabled { cursor: default; }
+.workflow-light {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  transition: transform .12s ease, filter .12s ease;
+}
+.workflow-link:not(.workflow-link--disabled):hover .workflow-light {
+  transform: translateY(-1px) scale(1.07);
+  filter: brightness(1.12);
+}
+.workflow-light--off {
+  color: #f8fafc;
+  background: rgba(248, 250, 252, .08);
+  border-color: rgba(248, 250, 252, .78);
+  box-shadow: 0 0 5px rgba(248, 250, 252, .28);
+}
+.workflow-light--green {
+  color: #07110a;
+  background: #22c55e;
+  border-color: #86efac;
+  box-shadow: 0 0 7px rgba(34, 197, 94, .82);
+}
+.workflow-light--yellow {
+  color: #171006;
+  background: #facc15;
+  border-color: #fde68a;
+  box-shadow: 0 0 7px rgba(250, 204, 21, .82);
+}
+.workflow-light--red {
+  color: #160606;
+  background: #ef4444;
+  border-color: #fca5a5;
+  box-shadow: 0 0 7px rgba(239, 68, 68, .82);
 }
 .score-cell {
   height: 20px;
@@ -1571,17 +1682,18 @@ def render_tab(rows: list[dict], key: str, display_cols: list[str] | None = None
 force_sheet_refresh = st.session_state.get("last_action") == "refresh"
 cached_tickers_df = st.session_state.get("tickers_df")
 cached_screening_df = st.session_state.get("screening_df")
-cached_audit_statuses = st.session_state.get("audit_statuses")
+cached_audit_data = st.session_state.get("audit_data")
 
 if (
     cached_tickers_df is not None
     and cached_screening_df is not None
-    and cached_audit_statuses is not None
+    and cached_audit_data is not None
     and not force_sheet_refresh
 ):
     tickers_df = cached_tickers_df.copy(deep=True)
     screening_df = cached_screening_df.copy(deep=True)
-    audit_statuses = dict(cached_audit_statuses)
+    audit_statuses = dict(cached_audit_data.get("statuses", {}))
+    audit_links = dict(cached_audit_data.get("links", {}))
     data_source = st.session_state.get("data_source", "Google Sheet")
 else:
     with st.spinner("Chargement du Google Sheet…"):
@@ -1610,20 +1722,27 @@ else:
                 st.warning(str(exc))
 
         try:
-            audit_statuses = load_audit_statuses(force_refresh=force_sheet_refresh)
+            audit_statuses, audit_links = load_audit_data(
+                force_refresh=force_sheet_refresh,
+            )
         except Exception as exc:
             LOGGER.exception("Échec du chargement Google Sheets : Audits")
-            if cached_audit_statuses is not None:
-                audit_statuses = dict(cached_audit_statuses)
+            if cached_audit_data is not None:
+                audit_statuses = dict(cached_audit_data.get("statuses", {}))
+                audit_links = dict(cached_audit_data.get("links", {}))
                 st.warning(f"Audits indisponibles : données précédentes conservées ({exc}).")
             else:
                 # Règle conservatrice : sans preuve dans Audits, aucun feu vert.
                 audit_statuses = {}
+                audit_links = {}
                 st.warning(str(exc))
 
         st.session_state["tickers_df"] = tickers_df.copy(deep=True)
         st.session_state["screening_df"] = screening_df.copy(deep=True)
-        st.session_state["audit_statuses"] = dict(audit_statuses)
+        st.session_state["audit_data"] = {
+            "statuses": dict(audit_statuses),
+            "links": dict(audit_links),
+        }
         st.session_state["data_source"] = data_source
 if tickers_df.empty:
     st.error("L'onglet Registre ne contient aucun titre exploitable.")
@@ -1632,7 +1751,11 @@ if tickers_df.empty:
 tickers_df["_audit_status"] = (
     tickers_df["gf_ticker"].astype(str).str.strip().str.upper().map(audit_statuses).fillna("")
 )
+tickers_df["_audit_link"] = (
+    tickers_df["gf_ticker"].astype(str).str.strip().str.upper().map(audit_links).fillna("")
+)
 screening_df["_audit_status"] = ""
+screening_df["_audit_link"] = ""
 
 suspended_underwriting_mask = tickers_df.apply(is_suspended_underwriting, axis=1)
 pf_df = tickers_df[tickers_df["portif"] == 1].copy()

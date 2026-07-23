@@ -2,10 +2,12 @@ import ast
 import html
 from html.parser import HTMLParser
 from pathlib import Path
+import re
 import unittest
 import urllib
 
 import finapp_logic
+import pandas as pd
 
 
 class _SingleTagParser(HTMLParser):
@@ -150,6 +152,83 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn("letter-spacing:.02em", attrs["style"])
         self.assertNotIn("jetbrains", attrs)
         self.assertIn("&lt;A&amp;B&gt;", markup)
+
+    def test_workflow_links_use_strict_codex_deep_links(self):
+        tree = ast.parse(self.source)
+        selected = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "CODEX_THREAD_LINK_RE"
+                for target in node.targets
+            ):
+                selected.append(node)
+            if isinstance(node, ast.FunctionDef) and node.name in {
+                "normalize_codex_thread_link",
+                "html_workflow_badge",
+            }:
+                selected.append(node)
+
+        namespace = {"html": html, "pd": pd, "re": re}
+        module = ast.Module(body=selected, type_ignores=[])
+        exec(compile(ast.fix_missing_locations(module), "app.py", "exec"), namespace)
+
+        valid = "codex://threads/019f6fab-de3c-7503-af3b-4234b6adb10d"
+        self.assertEqual(namespace["normalize_codex_thread_link"](valid), valid)
+        self.assertEqual(namespace["normalize_codex_thread_link"]("https://example.com"), "")
+
+        markup = namespace["html_workflow_badge"]("U", "green", "Ouvrir", valid)
+        parser = _SingleTagParser()
+        parser.feed(markup)
+        self.assertEqual(parser.tags[0][0], "a")
+        self.assertEqual(parser.tags[0][1]["href"], valid)
+        self.assertIn("workflow-light--green", markup)
+
+        invalid_markup = namespace["html_workflow_badge"](
+            "A", "green", "Lien invalide", "javascript:alert(1)"
+        )
+        self.assertNotIn("<a ", invalid_markup)
+        self.assertIn("workflow-link--disabled", invalid_markup)
+
+    def test_links_column_replaces_the_legacy_audit_light(self):
+        self.assertIn('"MAJ", "Liens", "JRS"', self.source)
+        self.assertIn('"lien underwriting": "underwriting_link"', self.source)
+        self.assertIn('"lien audit": "audit_link"', self.source)
+        self.assertNotIn(".audit-light", self.source)
+
+    def test_latest_audit_row_supplies_status_and_link_together(self):
+        tree = ast.parse(self.source)
+        function = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_normalize_audit_data"
+        )
+
+        class _StreamlitStub:
+            session_state = {}
+
+        namespace = {
+            "pd": pd,
+            "st": _StreamlitStub(),
+            "coalesce_alias_columns": finapp_logic.coalesce_alias_columns,
+            "clean_sheet_text": finapp_logic.clean_sheet_text,
+            "AUDIT_COL_NORMALIZED": {
+                "ticker": "gf_ticker",
+                "statut audit": "audit_status",
+                "lien audit": "audit_link",
+            },
+        }
+        module = ast.Module(body=[function], type_ignores=[])
+        exec(compile(ast.fix_missing_locations(module), "app.py", "exec"), namespace)
+
+        old_link = "codex://threads/00000000-0000-0000-0000-000000000001"
+        new_link = "codex://threads/00000000-0000-0000-0000-000000000002"
+        frame = pd.DataFrame({
+            "Ticker": ["ABC", "ABC"],
+            "Statut audit": ["PASS", "CORRECTION MATÉRIELLE"],
+            "Lien audit": [old_link, new_link],
+        })
+        statuses, links = namespace["_normalize_audit_data"](frame)
+        self.assertEqual(statuses["ABC"], "CORRECTION MATÉRIELLE")
+        self.assertEqual(links["ABC"], new_link)
 
 
 if __name__ == "__main__":

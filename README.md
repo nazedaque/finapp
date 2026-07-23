@@ -18,6 +18,13 @@ Vue Streamlit privée et en lecture seule de l'onglet `Registre` du Sheet `SOL i
 
 Le fichier local `.streamlit/secrets.toml` est ignoré par Git.
 
+## Liens Codex
+
+La colonne `Liens` lit `Lien underwriting` dans `Registre` et `Lien audit` dans
+`Audits`. Les badges `U` et `A` ouvrent les tâches avec le protocole
+`codex://threads/...`, disponible uniquement sur un appareil où Codex Desktop
+est installé et enregistré comme gestionnaire de ce protocole.
+
 ## Lancement local
 
 ```powershell
