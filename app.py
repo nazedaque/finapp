@@ -1026,7 +1026,10 @@ def html_workflow_letter(letter: str, label: str, link=None, state: str = "") ->
     safe_letter = letter if letter in {"U", "A"} else "?"
     safe_label = html.escape(label, quote=True)
     safe_link = normalize_codex_thread_link(link)
-    state_class = " workflow-link--stale" if state == "stale" else ""
+    state_class = {
+        "stale": " workflow-link--stale",
+        "blocked": " workflow-link--blocked",
+    }.get(state, "")
     mark = f'<span class="workflow-letter" aria-hidden="true">{safe_letter}</span>'
     if safe_link:
         return (
@@ -1065,7 +1068,10 @@ def html_workflow_links(
     if not underwritten:
         return f'<span class="workflow-links">{html_workflow_placeholder()}</span>', 0
 
-    underwriting_label = "Underwriting réalisé"
+    underwriting_blocked = registry_normalized == "non auditable"
+    underwriting_label = (
+        "Underwriting sous véto" if underwriting_blocked else "Underwriting réalisé"
+    )
     if not normalize_codex_thread_link(underwriting_link):
         underwriting_label += " - lien non renseigné"
 
@@ -1082,7 +1088,12 @@ def html_workflow_links(
         and registry_normalized != "non auditable"
     )
 
-    marks = [html_workflow_letter("U", underwriting_label, underwriting_link)]
+    marks = [html_workflow_letter(
+        "U",
+        underwriting_label,
+        underwriting_link,
+        state="blocked" if underwriting_blocked else "",
+    )]
     if audit_valid:
         audit_label = "Audit valide"
         marks.append(html_workflow_letter("A", audit_label, audit_link))
@@ -1435,6 +1446,9 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .workflow-link--disabled { cursor: default; }
 .workflow-link--stale .workflow-letter {
   color: #f59e0b !important;
+}
+.workflow-link--blocked .workflow-letter {
+  color: #ef4444 !important;
 }
 .workflow-letter,
 .workflow-placeholder {

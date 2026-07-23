@@ -216,6 +216,7 @@ class AppStructureTests(unittest.TestCase):
     def test_audit_tooltip_and_screening_score_typography_are_minimal(self):
         self.assertIn('audit_label = "Audit valide"', self.source)
         self.assertIn('audit_label = "Audit à mettre à jour"', self.source)
+        self.assertIn('"Underwriting sous véto"', self.source)
         self.assertNotIn('audit_label = f"Audit valide - {value}"', self.source)
         screening_css = self.source.split(".screening-zone-label {", 1)[1].split(
             ".wl-country-flag {", 1
@@ -260,10 +261,18 @@ class AppStructureTests(unittest.TestCase):
             render("PASS", True, audit_impact="MATERIAL"),
             ('<span class="workflow-links"><U><A:stale></span>', 2),
         )
+        self.assertEqual(
+            render("", True, registry_audit="NON AUDITABLE"),
+            ('<span class="workflow-links"><U:blocked><-></span>', 1),
+        )
 
     def test_stale_audit_uses_orange_workflow_state(self):
         self.assertIn(".workflow-link--stale .workflow-letter", self.source)
         self.assertIn("color: #f59e0b !important", self.source)
+
+    def test_blocked_underwriting_uses_red_workflow_state(self):
+        self.assertIn(".workflow-link--blocked .workflow-letter", self.source)
+        self.assertIn("color: #ef4444 !important", self.source)
 
     def test_latest_audit_row_supplies_status_and_link_together(self):
         tree = ast.parse(self.source)
