@@ -203,6 +203,7 @@ class AppStructureTests(unittest.TestCase):
         )[0]
         self.assertIn(".workflow-letter", workflow_css)
         self.assertIn("color: #f8fafc", workflow_css)
+        self.assertIn("color: #f8fafc !important", workflow_css)
         self.assertNotIn("border-radius: 50%", workflow_css)
         self.assertNotIn("box-shadow", workflow_css)
         self.assertNotIn("workflow-light", workflow_css)

@@ -1405,6 +1405,12 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   color: #f8fafc;
   text-decoration: none;
 }
+.wl-table a.workflow-link,
+.wl-table a.workflow-link:hover,
+.wl-table a.workflow-link:focus,
+.wl-table a.workflow-link:visited {
+  color: #f8fafc !important;
+}
 .workflow-link:not(.workflow-link--disabled) { cursor: pointer; }
 .workflow-link--disabled { cursor: default; }
 .workflow-letter {
@@ -1416,10 +1422,6 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-size: 10px;
   font-weight: 400;
   line-height: 1;
-}
-.workflow-link:not(.workflow-link--disabled):hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .score-cell {
   height: 20px;
