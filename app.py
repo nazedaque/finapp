@@ -1040,7 +1040,11 @@ def html_workflow_letter(letter: str, label: str, link=None) -> str:
 
 def html_workflow_placeholder(short: bool = False) -> str:
     mark = "-" if short else "—"
-    return f'<span class="workflow-placeholder" aria-label="Aucune référence">{mark}</span>'
+    suffix = "audit" if short else "screening"
+    return (
+        f'<span class="workflow-placeholder workflow-placeholder--{suffix}" '
+        f'aria-label="Aucune référence">{mark}</span>'
+    )
 
 
 def html_workflow_links(
@@ -1074,9 +1078,7 @@ def html_workflow_links(
 
     marks = [html_workflow_letter("U", underwriting_label, underwriting_link)]
     if audit_valid:
-        audit_label = f"Audit valide - {value}"
-        if not normalize_codex_thread_link(audit_link):
-            audit_label += " - lien non renseigné"
+        audit_label = "Audit valide"
         marks.append(html_workflow_letter("A", audit_label, audit_link))
     else:
         marks.append(html_workflow_placeholder(short=True))
@@ -1385,9 +1387,9 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
 .wl-flagged:hover td { background: #3a2875 !important; }
 .screening-zone-label {
   display: inline-block;
-  font-size: .63rem;
-  font-weight: 600;
-  line-height: 1;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
   white-space: nowrap;
 }
 .wl-country-flag {
@@ -1431,6 +1433,9 @@ CSS = """<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-ico
   font-weight: inherit;
   line-height: inherit;
   color: #93c5fd !important;
+}
+.workflow-placeholder--screening {
+  color: #c8d4e8 !important;
 }
 .score-cell {
   height: 20px;

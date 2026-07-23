@@ -204,12 +204,24 @@ class AppStructureTests(unittest.TestCase):
         self.assertIn(".workflow-letter", workflow_css)
         self.assertIn(".workflow-placeholder", workflow_css)
         self.assertIn("color: #93c5fd !important", workflow_css)
+        self.assertIn(".workflow-placeholder--screening", workflow_css)
+        self.assertIn("color: #c8d4e8 !important", workflow_css)
         self.assertIn("font-size: inherit", workflow_css)
         self.assertIn("line-height: inherit", workflow_css)
         self.assertNotIn("color: #ffffff", workflow_css)
         self.assertNotIn("border-radius: 50%", workflow_css)
         self.assertNotIn("box-shadow", workflow_css)
         self.assertNotIn("workflow-light", workflow_css)
+
+    def test_audit_tooltip_and_screening_score_typography_are_minimal(self):
+        self.assertIn('audit_label = "Audit valide"', self.source)
+        self.assertNotIn('audit_label = f"Audit valide - {value}"', self.source)
+        screening_css = self.source.split(".screening-zone-label {", 1)[1].split(
+            ".wl-country-flag {", 1
+        )[0]
+        self.assertIn("font-size: inherit", screening_css)
+        self.assertIn("font-weight: inherit", screening_css)
+        self.assertIn("line-height: inherit", screening_css)
 
     def test_workflow_letters_only_show_completed_valid_steps(self):
         tree = ast.parse(self.source)
